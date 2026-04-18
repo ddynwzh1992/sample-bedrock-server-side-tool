@@ -76,34 +76,8 @@ The agent is deployed as a managed Python service on AgentCore Runtime (default 
 
 - AWS account with Bedrock model access enabled for `openai.gpt-oss-120b`
 - A Bedrock long-term API key ([create one here](https://console.aws.amazon.com/bedrock/home#/api-keys/long-term/create))
+- AWS CLI configured with appropriate permissions
 - Python 3.12+
-
-### Local Development (Mock Data)
-
-Uses in-memory mock data with 50+ products — no AWS deployment needed for testing:
-
-```bash
-# 1. Clone the repo
-git clone https://github.com/ddynwzh1992/sample-bedrock-server-side-tool.git
-cd sample-bedrock-server-side-tool
-
-# 2. Install dependencies
-pip install strands-agents boto3 openai
-
-# 3. Run the demo (local mock mode)
-python demo/run_demo.py
-```
-
-### Server-Side Mode (Requires Deployed Gateway)
-
-```bash
-# Set API key
-export OPENAI_API_KEY="<your-bedrock-api-key>"
-export OPENAI_BASE_URL="https://bedrock-mantle.us-west-2.api.aws/v1"
-
-# Run with server-side tool execution
-python -m agent.serverside_agent <GATEWAY_ARN>
-```
 
 ### Example Conversation
 
@@ -179,15 +153,6 @@ aws cloudformation describe-stacks --stack-name shopassist-demo \
 # Test server-side tool execution
 export OPENAI_API_KEY="<your-bedrock-api-key>"
 python -m agent.serverside_agent <GatewayArn from output>
-```
-
-### Alternative: SAM Deploy (Lambda + DynamoDB only)
-
-If you prefer to manage Gateway and Runtime separately via `agentcore` CLI:
-
-```bash
-cd infrastructure
-sam build && sam deploy --guided --capabilities CAPABILITY_NAMED_IAM
 ```
 
 ## Project Structure

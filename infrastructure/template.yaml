@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: ShopAssist E-Commerce Agent — Lambda + DynamoDB backend for AgentCore Gateway
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        PRODUCTS_TABLE: !Ref ProductsTable
+        CARTS_TABLE: !Ref CartsTable
+        ORDERS_TABLE: !Ref OrdersTable
+
+Resources:
+  # ─── DynamoDB Tables ────────────────────────────────────────────────────────
+  ProductsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ShopAssist-Products
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: category
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: category-index
+          KeySchema:
+            - AttributeName: category
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  CartsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ShopAssist-Carts
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: customer_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: customer_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ShopAssist-Orders
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: order_id
+          AttributeType: S
+        - AttributeName: customer_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: order_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: customer-index
+          KeySchema:
+            - AttributeName: customer_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # ─── Lambda Functions ───────────────────────────────────────────────────────
+  ProductsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ShopAssist-Products
+      Handler: handler.handler
+      CodeUri: ../lambda/products/
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ProductsTable
+
+  CartFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ShopAssist-Cart
+      Handler: handler.handler
+      CodeUri: ../lambda/cart/
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CartsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref ProductsTable
+
+  OrdersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ShopAssist-Orders
+      Handler: handler.handler
+      CodeUri: ../lambda/orders/
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrdersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CartsTable
+
+Outputs:
+  ProductsFunctionArn:
+    Description: Products Lambda function ARN (use as Gateway target)
+    Value: !GetAtt ProductsFunction.Arn
+
+  CartFunctionArn:
+    Description: Cart Lambda function ARN (use as Gateway target)
+    Value: !GetAtt CartFunction.Arn
+
+  OrdersFunctionArn:
+    Description: Orders Lambda function ARN (use as Gateway target)
+    Value: !GetAtt OrdersFunction.Arn
+
+  ProductsTableName:
+    Description: Products DynamoDB table name
+    Value: !Ref ProductsTable
+
+  CartsTableName:
+    Description: Carts DynamoDB table name
+    Value: !Ref CartsTable
+
+  OrdersTableName:
+    Description: Orders DynamoDB table name
+    Value: !Ref OrdersTable

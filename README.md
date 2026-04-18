@@ -44,9 +44,17 @@ graph TB
     style SA fill:#06b6d4,color:#fff
 ```
 
-## Two Execution Modes
+## Three Execution Modes
 
-### Mode 1: Client-Side (Strands Agent + MCP Client → Gateway)
+### Mode 1: Local (Strands Agent + @tool functions)
+
+```
+Customer → Strands Agent → Bedrock Model → tool_use → local Python function
+```
+
+For development and testing. No infrastructure needed.
+
+### Mode 2: Client-Side (Strands Agent + MCP Client → Gateway)
 
 ```
 Customer → Strands Agent → Bedrock Model → returns tool_use
@@ -58,7 +66,7 @@ Customer → Strands Agent → Bedrock Model → returns tool_use
 
 The agent orchestrates the tool execution loop client-side.
 
-### Mode 2: Server-Side (Bedrock Responses API — Single Call)
+### Mode 3: Server-Side (Bedrock Responses API — Single Call)
 
 ```
 Customer → Responses API (with Gateway ARN) → Bedrock Model
@@ -69,6 +77,14 @@ Customer → Responses API (with Gateway ARN) → Bedrock Model
 ```
 
 No client-side orchestration. Bedrock handles tool discovery, selection, execution, and result injection.
+
+### Production: Agent on AgentCore Runtime
+
+```
+Client → AgentCore Runtime (/invocations) → Agent Container → Bedrock + Gateway
+```
+
+The agent itself is deployed as a managed container on AgentCore Runtime with auto-scaling, health checks, and observability.
 
 ## Quick Start (Local Mode)
 
@@ -119,22 +135,36 @@ Your cart: $79.99 - $8.00 = $71.99
 Ready to checkout, or would you like to keep browsing?
 ```
 
-## AWS Deployment (Gateway Mode)
+## AWS Deployment
 
-### Prerequisites
+### Option A: One-Click CloudFormation
 
-- AWS Account with Bedrock model access (Claude Sonnet)
-- Node.js 18+ (for AgentCore CLI)
-- Python 3.12+
-- AWS SAM CLI
-
-### Step 1: Deploy Infrastructure
+Deploy the entire stack (DynamoDB + Lambda + IAM roles + ECR) with a single command:
 
 ```bash
-# Deploy Lambda + DynamoDB
+aws cloudformation deploy \
+  --template-file infrastructure/cloudformation-one-click.yaml \
+  --stack-name shopassist-demo \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region us-west-2
+```
+
+This creates:
+- 3 DynamoDB tables (Products, Carts, Orders)
+- 3 Lambda functions with inline tool code
+- IAM roles for Gateway and Runtime
+- ECR repository for agent container
+
+After deployment, get the outputs:
+```bash
+aws cloudformation describe-stacks --stack-name shopassist-demo --query 'Stacks[0].Outputs' --output table
+```
+
+### Option B: SAM Deploy (if you prefer SAM)
+
+```bash
 cd infrastructure
-sam build
-sam deploy --guided
+sam build && sam deploy --guided --capabilities CAPABILITY_NAMED_IAM
 ```
 
 ### Step 2: Create AgentCore Gateway
@@ -147,7 +177,7 @@ npm install -g @aws/agentcore
 agentcore create --name ShopAssist --defaults
 agentcore add gateway --name ShopAssistGateway --authorizer-type NONE
 
-# Add Lambda targets
+# Add Lambda targets (use ARNs from CloudFormation outputs)
 agentcore add gateway-target --name Products \
   --type lambda-function-arn \
   --lambda-arn <PRODUCTS_FUNCTION_ARN> \
@@ -158,14 +188,37 @@ agentcore add gateway-target --name Products \
 agentcore deploy
 ```
 
-### Step 3: Run in Gateway Mode
+### Step 3: Deploy Agent to AgentCore Runtime
 
 ```bash
-# Client-side execution
-python -m agent.gateway_agent https://<gateway-id>.gateway.bedrock-agentcore.<region>.amazonaws.com/mcp
+# Build container
+docker build -t shopassist-agent .
 
-# Server-side execution
-python -m agent.serverside_agent arn:aws:bedrock-agentcore:<region>:<account>:gateway/<gateway-id>
+# Tag and push to ECR (use repository URI from CloudFormation output)
+aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin <ACCOUNT>.dkr.ecr.us-west-2.amazonaws.com
+docker tag shopassist-agent:latest <ECR_REPOSITORY_URI>:latest
+docker push <ECR_REPOSITORY_URI>:latest
+
+# Deploy to AgentCore Runtime via CLI
+agentcore deploy
+```
+
+The agent is now accessible at the AgentCore Runtime endpoint:
+```bash
+# Invoke the deployed agent
+curl -X POST https://<runtime-endpoint>/invocations \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Show me headphones under $100", "customer_id": "CUST-001"}'
+```
+
+### Step 4: Run Client Modes
+
+```bash
+# Client-side execution (Strands + MCP → Gateway)
+python -m agent.gateway_agent https://<gateway-id>.gateway.bedrock-agentcore.us-west-2.amazonaws.com/mcp
+
+# Server-side execution (Responses API)
+python -m agent.serverside_agent arn:aws:bedrock-agentcore:us-west-2:<account>:gateway/<gateway-id>
 ```
 
 ## Project Structure
@@ -180,7 +233,8 @@ ecommerce-agent-demo/
 │   ├── data.py                        # 50+ sample products, in-memory state
 │   ├── local_agent.py                 # Local mode: Strands Agent + @tool functions
 │   ├── gateway_agent.py              # Gateway mode: MCP Client → AgentCore Gateway
-│   └── serverside_agent.py           # Server-side mode: Responses API
+│   ├── serverside_agent.py           # Server-side mode: Responses API
+│   └── runtime_agent.py             # AgentCore Runtime deployment wrapper
 ├── demo/
 │   └── run_demo.py                    # Interactive CLI demo
 ├── lambda/
@@ -188,9 +242,12 @@ ecommerce-agent-demo/
 │   ├── cart/handler.py                # Cart operations
 │   └── orders/handler.py             # Order management
 ├── infrastructure/
-│   └── template.yaml                  # AWS SAM template (DynamoDB + Lambda)
+│   ├── cloudformation-one-click.yaml  # One-click CloudFormation (DynamoDB+Lambda+IAM+ECR)
+│   ├── template.yaml                  # AWS SAM template (alternative)
+│   └── seed_data.py                   # Seed DynamoDB with products
 ├── tools/
 │   └── tool_schemas.json             # MCP tool schemas for Gateway
+├── Dockerfile                         # Agent container for AgentCore Runtime
 └── docs/
     ├── architecture.md                # Detailed architecture docs
     └── setup.md                       # Step-by-step setup guide

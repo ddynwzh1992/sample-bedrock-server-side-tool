@@ -1,0 +1,432 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ShopAssist E-Commerce Agent — One-Click Deployment
+  Deploys: DynamoDB tables, Lambda tools, AgentCore Gateway, and AgentCore Runtime agent
+
+Parameters:
+  ModelId:
+    Type: String
+    Default: us.anthropic.claude-sonnet-4-20250514-v1:0
+    Description: Bedrock model ID for the agent
+  
+  GatewayAuthorizerType:
+    Type: String
+    Default: NONE
+    AllowedValues: [NONE, CUSTOM_JWT, IAM]
+    Description: Gateway inbound authentication type (NONE for demo)
+
+Resources:
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # DATA LAYER — DynamoDB Tables
+  # ═══════════════════════════════════════════════════════════════════════════════
+
+  ProductsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${AWS::StackName}-Products
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: category
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: category-index
+          KeySchema:
+            - AttributeName: category
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  CartsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${AWS::StackName}-Carts
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: customer_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: customer_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${AWS::StackName}-Orders
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: order_id
+          AttributeType: S
+        - AttributeName: customer_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: order_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: customer-index
+          KeySchema:
+            - AttributeName: customer_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # TOOL LAYER — Lambda Functions
+  # ═══════════════════════════════════════════════════════════════════════════════
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-LambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt ProductsTable.Arn
+                  - !Sub ${ProductsTable.Arn}/index/*
+                  - !GetAtt CartsTable.Arn
+                  - !GetAtt OrdersTable.Arn
+                  - !Sub ${OrdersTable.Arn}/index/*
+
+  ProductsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-Products
+      Runtime: python3.12
+      Handler: handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        ZipFile: |
+          import json
+          
+          # Sample product data (in production, query DynamoDB)
+          PRODUCTS = [
+              {"id": "ELEC-001", "name": "SoundWave Pro Wireless Headphones", "category": "Electronics", "price": 79.99, "rating": 4.5, "reviews": 2847, "description": "Premium wireless headphones with ANC, 30-hour battery.", "in_stock": True},
+              {"id": "ELEC-002", "name": "BassBoost Studio Over-Ear Headphones", "category": "Electronics", "price": 149.99, "rating": 4.7, "reviews": 1523, "description": "Audiophile-grade over-ear headphones with 50mm drivers.", "in_stock": True},
+              {"id": "ELEC-003", "name": "AirBud Mini Earbuds", "category": "Electronics", "price": 49.99, "rating": 4.2, "reviews": 5621, "description": "Compact true wireless earbuds, IPX5 waterproof.", "in_stock": True},
+              {"id": "ELEC-005", "name": "RunnerX Sport Earbuds", "category": "Electronics", "price": 69.99, "rating": 4.4, "reviews": 3156, "description": "Sport earbuds with bone conduction, IP67.", "in_stock": True},
+              {"id": "ELEC-006", "name": "UltraBook Pro 15 Laptop", "category": "Electronics", "price": 1299.99, "rating": 4.6, "reviews": 1834, "description": "15-inch 4K OLED, Intel i7, 32GB RAM.", "in_stock": True},
+              {"id": "HOME-001", "name": "BrewMaster Elite Coffee Maker", "category": "Home & Kitchen", "price": 189.99, "rating": 4.7, "reviews": 3456, "description": "12-cup programmable with built-in grinder.", "in_stock": True},
+              {"id": "HOME-003", "name": "CrispAir Digital Air Fryer", "category": "Home & Kitchen", "price": 99.99, "rating": 4.6, "reviews": 7234, "description": "5.8-quart digital air fryer with 8 presets.", "in_stock": True},
+              {"id": "SPRT-001", "name": "CloudRun Ultra Running Shoes", "category": "Sports & Outdoors", "price": 139.99, "rating": 4.6, "reviews": 4523, "description": "Lightweight with carbon plate for energy return.", "in_stock": True},
+              {"id": "SPRT-002", "name": "ZenFlow Premium Yoga Mat", "category": "Sports & Outdoors", "price": 49.99, "rating": 4.7, "reviews": 6789, "description": "6mm thick, non-slip natural rubber.", "in_stock": True},
+              {"id": "BOOK-001", "name": "Building AI Agents: From Theory to Production", "category": "Books", "price": 44.99, "rating": 4.7, "reviews": 567, "description": "Comprehensive guide to building AI agents.", "in_stock": True},
+              {"id": "BOOK-005", "name": "Project Hail Mary", "category": "Books", "price": 16.99, "rating": 4.8, "reviews": 67890, "description": "A lone astronaut must save Earth.", "in_stock": True},
+              {"id": "BOOK-006", "name": "Atomic Habits", "category": "Books", "price": 18.99, "rating": 4.7, "reviews": 89012, "description": "Build good habits & break bad ones.", "in_stock": True},
+          ]
+          
+          def handler(event, context):
+              tool_name = event.get("tool_name") or event.get("name", "")
+              params = event.get("parameters") or event.get("input", {})
+              
+              if tool_name == "search_products":
+                  return search_products(params)
+              elif tool_name == "get_product_details":
+                  return get_product_details(params)
+              elif tool_name == "get_recommendations":
+                  return get_recommendations(params)
+              return {"error": f"Unknown tool: {tool_name}"}
+          
+          def search_products(params):
+              query = params.get("query", "").lower()
+              category = params.get("category", "")
+              max_price = float(params.get("max_price", 99999))
+              min_price = float(params.get("min_price", 0))
+              results = []
+              for p in PRODUCTS:
+                  if category and p["category"].lower() != category.lower():
+                      continue
+                  if p["price"] < min_price or p["price"] > max_price:
+                      continue
+                  if query:
+                      if query not in f"{p['name']} {p['description']} {p['category']}".lower():
+                          continue
+                  results.append(p)
+              return {"products": results[:10], "total": len(results)}
+          
+          def get_product_details(params):
+              pid = params.get("product_id", "")
+              for p in PRODUCTS:
+                  if p["id"] == pid:
+                      return {"product": p}
+              return {"error": f"Product '{pid}' not found"}
+          
+          def get_recommendations(params):
+              category = params.get("category", "")
+              limit = int(params.get("limit", 5))
+              pool = PRODUCTS if not category else [p for p in PRODUCTS if p["category"].lower() == category.lower()]
+              pool.sort(key=lambda x: (-x["rating"], -x["reviews"]))
+              return {"recommendations": pool[:limit]}
+      Environment:
+        Variables:
+          PRODUCTS_TABLE: !Ref ProductsTable
+
+  CartFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-Cart
+      Runtime: python3.12
+      Handler: handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        ZipFile: |
+          import json
+          
+          carts = {}
+          applied_coupons = {}
+          COUPONS = {
+              "WELCOME10": {"discount_percent": 10, "min_order": 0},
+              "SAVE20": {"discount_percent": 20, "min_order": 100},
+              "SPRING25": {"discount_percent": 25, "min_order": 75},
+              "TECH15": {"discount_percent": 15, "min_order": 200},
+          }
+          
+          def handler(event, context):
+              tool_name = event.get("tool_name") or event.get("name", "")
+              params = event.get("parameters") or event.get("input", {})
+              
+              if tool_name == "add_to_cart":
+                  cid = params["customer_id"]
+                  pid = params["product_id"]
+                  qty = int(params.get("quantity", 1))
+                  if cid not in carts:
+                      carts[cid] = []
+                  for item in carts[cid]:
+                      if item["product_id"] == pid:
+                          item["quantity"] += qty
+                          return {"status": "updated", "product_id": pid, "quantity": item["quantity"]}
+                  carts[cid].append({"product_id": pid, "quantity": qty})
+                  return {"status": "added", "product_id": pid, "quantity": qty}
+              
+              elif tool_name == "view_cart":
+                  cid = params["customer_id"]
+                  return {"items": carts.get(cid, []), "applied_coupon": applied_coupons.get(cid)}
+              
+              elif tool_name == "remove_from_cart":
+                  cid = params["customer_id"]
+                  pid = params["product_id"]
+                  if cid in carts:
+                      carts[cid] = [i for i in carts[cid] if i["product_id"] != pid]
+                  return {"status": "removed", "product_id": pid}
+              
+              elif tool_name == "apply_coupon":
+                  cid = params["customer_id"]
+                  code = params["coupon_code"].upper()
+                  if code not in COUPONS:
+                      return {"status": "invalid", "code": code}
+                  applied_coupons[cid] = code
+                  return {"status": "applied", "code": code, "details": COUPONS[code]}
+              
+              return {"error": f"Unknown tool: {tool_name}"}
+      Environment:
+        Variables:
+          CARTS_TABLE: !Ref CartsTable
+
+  OrdersFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-Orders
+      Runtime: python3.12
+      Handler: handler.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        ZipFile: |
+          import json, uuid
+          from datetime import datetime, timedelta
+          
+          orders = {
+              "ORD-20260401-001": {"order_id": "ORD-20260401-001", "customer_id": "CUST-001", "items": [{"name": "SoundWave Pro", "quantity": 1, "price": 79.99}], "total": 79.99, "status": "delivered"},
+              "ORD-20260410-002": {"order_id": "ORD-20260410-002", "customer_id": "CUST-001", "items": [{"name": "Air Fryer", "quantity": 1, "price": 99.99}], "total": 99.99, "status": "shipped", "tracking": "1Z999AA10123456784"},
+          }
+          
+          def handler(event, context):
+              tool_name = event.get("tool_name") or event.get("name", "")
+              params = event.get("parameters") or event.get("input", {})
+              
+              if tool_name == "checkout":
+                  oid = f"ORD-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+                  orders[oid] = {"order_id": oid, "customer_id": params["customer_id"], "status": "confirmed", "payment": params.get("payment_method", "credit_card")}
+                  return {"status": "confirmed", "order_id": oid, "delivery": "3-5 business days"}
+              
+              elif tool_name == "get_order_status":
+                  oid = params["order_id"]
+                  return orders.get(oid, {"error": f"Order '{oid}' not found"})
+              
+              elif tool_name == "list_orders":
+                  cid = params["customer_id"]
+                  return {"orders": [o for o in orders.values() if o.get("customer_id") == cid]}
+              
+              elif tool_name == "request_return":
+                  oid = params["order_id"]
+                  if oid not in orders:
+                      return {"error": f"Order '{oid}' not found"}
+                  if orders[oid]["status"] not in ("delivered", "shipped"):
+                      return {"error": f"Cannot return — status is {orders[oid]['status']}"}
+                  rid = f"RET-{uuid.uuid4().hex[:8].upper()}"
+                  orders[oid]["status"] = "return_requested"
+                  return {"status": "return_requested", "return_id": rid, "reason": params.get("reason", "")}
+              
+              return {"error": f"Unknown tool: {tool_name}"}
+      Environment:
+        Variables:
+          ORDERS_TABLE: !Ref OrdersTable
+
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # GATEWAY LAYER — AgentCore Gateway (invoke permissions for Lambda)
+  # ═══════════════════════════════════════════════════════════════════════════════
+
+  GatewayLambdaInvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-GatewayInvokeRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdaTools
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt ProductsFunction.Arn
+                  - !GetAtt CartFunction.Arn
+                  - !GetAtt OrdersFunction.Arn
+
+  # ═══════════════════════════════════════════════════════════════════════════════
+  # AGENT LAYER — AgentCore Runtime Role
+  # ═══════════════════════════════════════════════════════════════════════════════
+
+  AgentRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-AgentRuntimeRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BedrockInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:CreateResponse
+                Resource: "*"
+        - PolicyName: AgentCoreAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:*
+                Resource: "*"
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+
+  # ECR Repository for agent container
+  AgentECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${AWS::StackName}-agent
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+Outputs:
+  # Data Layer
+  ProductsTableName:
+    Description: Products DynamoDB table
+    Value: !Ref ProductsTable
+  CartsTableName:
+    Description: Carts DynamoDB table
+    Value: !Ref CartsTable
+  OrdersTableName:
+    Description: Orders DynamoDB table
+    Value: !Ref OrdersTable
+
+  # Lambda ARNs (use as Gateway targets)
+  ProductsFunctionArn:
+    Description: Products Lambda ARN — add as Gateway target
+    Value: !GetAtt ProductsFunction.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-ProductsArn
+  CartFunctionArn:
+    Description: Cart Lambda ARN — add as Gateway target
+    Value: !GetAtt CartFunction.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-CartArn
+  OrdersFunctionArn:
+    Description: Orders Lambda ARN — add as Gateway target
+    Value: !GetAtt OrdersFunction.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-OrdersArn
+
+  # Gateway
+  GatewayInvokeRoleArn:
+    Description: IAM Role for Gateway to invoke Lambda tools
+    Value: !GetAtt GatewayLambdaInvokeRole.Arn
+
+  # Agent Runtime
+  AgentRuntimeRoleArn:
+    Description: IAM Role for AgentCore Runtime
+    Value: !GetAtt AgentRuntimeRole.Arn
+  AgentECRRepositoryUri:
+    Description: ECR repository for agent container image
+    Value: !GetAtt AgentECRRepository.RepositoryUri
+
+  # Next Steps
+  NextSteps:
+    Description: "After stack deploys, run: agentcore add gateway --name ShopAssist --authorizer-type NONE && agentcore add gateway-target (for each Lambda ARN) && agentcore deploy"
+    Value: !Sub "Stack ${AWS::StackName} deployed. Use 'agentcore' CLI to create Gateway and deploy agent to Runtime."

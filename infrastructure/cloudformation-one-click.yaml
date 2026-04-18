@@ -9,9 +9,14 @@ Parameters:
     Default: us.anthropic.claude-sonnet-4-20250514-v1:0
     Description: Bedrock model ID for the agent
 
-  AgentImageUri:
+  AgentCodeS3Bucket:
     Type: String
-    Description: ECR image URI for the agent container (e.g., 123456789012.dkr.ecr.us-west-2.amazonaws.com/shopassist-agent:latest)
+    Description: S3 bucket containing the agent code package (zip)
+
+  AgentCodeS3Key:
+    Type: String
+    Default: shopassist-agent/agent.zip
+    Description: S3 key for the agent code zip package
 
 Resources:
   # ═══════════════════════════════════════════════════════════════════════════════
@@ -515,16 +520,14 @@ Resources:
                   - bedrock-agentcore:InvokeGateway
                   - bedrock-agentcore:ListGatewayTools
                 Resource: !GetAtt ShopAssistGateway.GatewayArn
-        - PolicyName: ECRPull
+        - PolicyName: S3CodeAccess
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
-                  - ecr:GetDownloadUrlForLayer
-                  - ecr:BatchGetImage
-                  - ecr:GetAuthorizationToken
-                Resource: "*"
+                  - s3:GetObject
+                Resource: !Sub arn:aws:s3:::${AgentCodeS3Bucket}/${AgentCodeS3Key}
 
   ShopAssistRuntime:
     Type: AWS::BedrockAgentCore::Runtime
@@ -537,8 +540,15 @@ Resources:
       AgentRuntimeName: !Sub ${AWS::StackName}Agent
       Description: "ShopAssist E-Commerce Agent — Strands Agents + Bedrock + AgentCore Gateway"
       AgentRuntimeArtifact:
-        ContainerConfiguration:
-          ContainerUri: !Ref AgentImageUri
+        CodeConfiguration:
+          Runtime: PYTHON_3_12
+          EntryPoint:
+            - agent.runtime_agent
+            - app
+          Code:
+            S3:
+              Bucket: !Ref AgentCodeS3Bucket
+              ObjectKey: !Ref AgentCodeS3Key
       RoleArn: !GetAtt AgentRuntimeRole.Arn
       NetworkConfiguration:
         NetworkMode: PUBLIC

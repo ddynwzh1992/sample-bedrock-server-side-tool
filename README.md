@@ -137,18 +137,17 @@ Ready to checkout, or would you like to keep browsing?
 
 ## AWS Deployment
 
-### Step 1: Build & Push Agent Container
+### Step 1: Package & Upload Agent Code to S3
 
 ```bash
-# Create ECR repository
-aws ecr create-repository --repository-name shopassist-agent --region us-west-2
+# Create S3 bucket (one-time)
+aws s3 mb s3://my-shopassist-artifacts --region us-west-2
 
-# Build and push
-docker build -t shopassist-agent .
-aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin <ACCOUNT>.dkr.ecr.us-west-2.amazonaws.com
-docker tag shopassist-agent:latest <ACCOUNT>.dkr.ecr.us-west-2.amazonaws.com/shopassist-agent:latest
-docker push <ACCOUNT>.dkr.ecr.us-west-2.amazonaws.com/shopassist-agent:latest
+# Package agent code and upload
+./infrastructure/package_agent.sh my-shopassist-artifacts
 ```
+
+This zips the agent Python code + dependencies and uploads to S3.
 
 ### Step 2: One-Click CloudFormation Deploy
 
@@ -160,7 +159,8 @@ aws cloudformation deploy \
   --stack-name shopassist-demo \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides \
-    AgentImageUri=<ACCOUNT>.dkr.ecr.us-west-2.amazonaws.com/shopassist-agent:latest \
+    AgentCodeS3Bucket=my-shopassist-artifacts \
+    AgentCodeS3Key=shopassist-agent/agent.zip \
   --region us-west-2
 ```
 
@@ -168,7 +168,7 @@ This creates:
 - **3 DynamoDB tables** (Products, Carts, Orders)
 - **3 Lambda functions** with inline tool code
 - **AgentCore Gateway** (MCP endpoint) with 3 Lambda targets and inline tool schemas
-- **AgentCore Runtime** (default/PUBLIC mode) hosting the agent container
+- **AgentCore Runtime** (Python 3.12, default mode) hosting the agent directly — no container needed
 - All IAM roles with least-privilege policies
 
 ### Step 3: Get Outputs & Test
@@ -187,7 +187,7 @@ python -m agent.serverside_agent <GatewayArn from output>
 
 ### Alternative: SAM Deploy (Lambda + DynamoDB only)
 
-If you prefer to manage Gateway and Runtime separately via CLI:
+If you prefer to manage Gateway and Runtime separately via `agentcore` CLI:
 
 ```bash
 cd infrastructure

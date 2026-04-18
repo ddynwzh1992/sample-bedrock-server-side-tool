@@ -81,10 +81,10 @@ No client-side orchestration. Bedrock handles tool discovery, selection, executi
 ### Production: Agent on AgentCore Runtime
 
 ```
-Client → AgentCore Runtime (/invocations) → Agent Container → Bedrock + Gateway
+Client → AgentCore Runtime (/invocations) → Python Agent (Strands SDK) → Bedrock + Gateway
 ```
 
-The agent itself is deployed as a managed container on AgentCore Runtime with auto-scaling, health checks, and observability.
+The agent is deployed as a managed Python service on AgentCore Runtime (default mode) with auto-scaling, health checks, and observability. No container needed — just upload your Python code to S3.
 
 ## Quick Start (Local Mode)
 
@@ -92,8 +92,8 @@ No AWS deployment needed — uses in-memory mock data with 50+ products.
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/ddynwzh1992/ecommerce-agent-demo.git
-cd ecommerce-agent-demo
+git clone https://github.com/ddynwzh1992/sample-bedrock-server-side-tool.git
+cd sample-bedrock-server-side-tool
 
 # 2. Install dependencies
 pip install strands-agents boto3
@@ -215,12 +215,13 @@ ecommerce-agent-demo/
 │   ├── cart/handler.py                # Cart operations
 │   └── orders/handler.py             # Order management
 ├── infrastructure/
-│   ├── cloudformation-one-click.yaml  # One-click CloudFormation (DynamoDB+Lambda+IAM+ECR)
+│   ├── cloudformation-one-click.yaml  # One-click CFN (DynamoDB+Lambda+Gateway+Runtime)
+│   ├── package_agent.sh               # Package agent code → S3 for Runtime
 │   ├── template.yaml                  # AWS SAM template (alternative)
 │   └── seed_data.py                   # Seed DynamoDB with products
 ├── tools/
 │   └── tool_schemas.json             # MCP tool schemas for Gateway
-├── Dockerfile                         # Agent container for AgentCore Runtime
+├── Dockerfile                         # Optional: container mode for AgentCore Runtime
 └── docs/
     ├── architecture.md                # Detailed architecture docs
     └── setup.md                       # Step-by-step setup guide
@@ -262,6 +263,14 @@ ecommerce-agent-demo/
 - Built-in auth (IAM, OAuth, JWT)
 - Semantic tool search for large tool collections
 - Works with any agent framework (Strands, LangGraph, CrewAI)
+
+### AgentCore Runtime
+- Serverless hosting for AI agents — no infra management
+- Default mode: Python 3.12 runtime with S3 code package (like Lambda, but for agents)
+- Alternative: Container mode with ECR image
+- Built-in `/invocations` and `/ping` endpoints
+- Auto-scaling, observability, and lifecycle management
+- Framework-agnostic: Strands, LangGraph, CrewAI all supported
 
 ## Environment Variables
 

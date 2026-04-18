@@ -137,88 +137,61 @@ Ready to checkout, or would you like to keep browsing?
 
 ## AWS Deployment
 
-### Option A: One-Click CloudFormation
+### Step 1: Build & Push Agent Container
 
-Deploy the entire stack (DynamoDB + Lambda + IAM roles + ECR) with a single command:
+```bash
+# Create ECR repository
+aws ecr create-repository --repository-name shopassist-agent --region us-west-2
+
+# Build and push
+docker build -t shopassist-agent .
+aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin <ACCOUNT>.dkr.ecr.us-west-2.amazonaws.com
+docker tag shopassist-agent:latest <ACCOUNT>.dkr.ecr.us-west-2.amazonaws.com/shopassist-agent:latest
+docker push <ACCOUNT>.dkr.ecr.us-west-2.amazonaws.com/shopassist-agent:latest
+```
+
+### Step 2: One-Click CloudFormation Deploy
+
+Deploys **everything** in one command — DynamoDB, Lambda tools, AgentCore Gateway + Targets, and AgentCore Runtime:
 
 ```bash
 aws cloudformation deploy \
   --template-file infrastructure/cloudformation-one-click.yaml \
   --stack-name shopassist-demo \
   --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides \
+    AgentImageUri=<ACCOUNT>.dkr.ecr.us-west-2.amazonaws.com/shopassist-agent:latest \
   --region us-west-2
 ```
 
 This creates:
-- 3 DynamoDB tables (Products, Carts, Orders)
-- 3 Lambda functions with inline tool code
-- IAM roles for Gateway and Runtime
-- ECR repository for agent container
+- **3 DynamoDB tables** (Products, Carts, Orders)
+- **3 Lambda functions** with inline tool code
+- **AgentCore Gateway** (MCP endpoint) with 3 Lambda targets and inline tool schemas
+- **AgentCore Runtime** (default/PUBLIC mode) hosting the agent container
+- All IAM roles with least-privilege policies
 
-After deployment, get the outputs:
+### Step 3: Get Outputs & Test
+
 ```bash
-aws cloudformation describe-stacks --stack-name shopassist-demo --query 'Stacks[0].Outputs' --output table
+# Get all endpoints
+aws cloudformation describe-stacks --stack-name shopassist-demo \
+  --query 'Stacks[0].Outputs' --output table
+
+# Use the Gateway URL for client-side MCP connection
+python -m agent.gateway_agent <GatewayUrl from output>
+
+# Use the Gateway ARN for server-side tool execution
+python -m agent.serverside_agent <GatewayArn from output>
 ```
 
-### Option B: SAM Deploy (if you prefer SAM)
+### Alternative: SAM Deploy (Lambda + DynamoDB only)
+
+If you prefer to manage Gateway and Runtime separately via CLI:
 
 ```bash
 cd infrastructure
 sam build && sam deploy --guided --capabilities CAPABILITY_NAMED_IAM
-```
-
-### Step 2: Create AgentCore Gateway
-
-```bash
-# Install AgentCore CLI
-npm install -g @aws/agentcore
-
-# Create gateway
-agentcore create --name ShopAssist --defaults
-agentcore add gateway --name ShopAssistGateway --authorizer-type NONE
-
-# Add Lambda targets (use ARNs from CloudFormation outputs)
-agentcore add gateway-target --name Products \
-  --type lambda-function-arn \
-  --lambda-arn <PRODUCTS_FUNCTION_ARN> \
-  --tool-schema-file tools/tool_schemas.json \
-  --gateway ShopAssistGateway
-
-# Deploy
-agentcore deploy
-```
-
-### Step 3: Deploy Agent to AgentCore Runtime
-
-```bash
-# Build container
-docker build -t shopassist-agent .
-
-# Tag and push to ECR (use repository URI from CloudFormation output)
-aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin <ACCOUNT>.dkr.ecr.us-west-2.amazonaws.com
-docker tag shopassist-agent:latest <ECR_REPOSITORY_URI>:latest
-docker push <ECR_REPOSITORY_URI>:latest
-
-# Deploy to AgentCore Runtime via CLI
-agentcore deploy
-```
-
-The agent is now accessible at the AgentCore Runtime endpoint:
-```bash
-# Invoke the deployed agent
-curl -X POST https://<runtime-endpoint>/invocations \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Show me headphones under $100", "customer_id": "CUST-001"}'
-```
-
-### Step 4: Run Client Modes
-
-```bash
-# Client-side execution (Strands + MCP → Gateway)
-python -m agent.gateway_agent https://<gateway-id>.gateway.bedrock-agentcore.us-west-2.amazonaws.com/mcp
-
-# Server-side execution (Responses API)
-python -m agent.serverside_agent arn:aws:bedrock-agentcore:us-west-2:<account>:gateway/<gateway-id>
 ```
 
 ## Project Structure

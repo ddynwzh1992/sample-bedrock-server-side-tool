@@ -75,9 +75,10 @@ The agent is deployed as a managed Python service on AgentCore Runtime (default 
 ### Prerequisites
 
 - AWS account with Bedrock model access enabled for `openai.gpt-oss-120b`
-- A Bedrock long-term API key ([create one here](https://console.aws.amazon.com/bedrock/home#/api-keys/long-term/create))
-- AWS CLI configured with appropriate permissions
+- AWS CLI configured with appropriate permissions (`aws configure`)
 - Python 3.12+
+
+> **Note:** Authentication uses standard AWS IAM credentials (SigV4). No separate API key needed — just `aws configure`.
 
 ### Example Conversation
 
@@ -149,10 +150,20 @@ This creates:
 # Get all endpoints
 aws cloudformation describe-stacks --stack-name shopassist-demo \
   --query 'Stacks[0].Outputs' --output table
+```
 
-# Test server-side tool execution
-export OPENAI_API_KEY="<your-bedrock-api-key>"
-python -m agent.serverside_agent <GatewayArn from output>
+The stack outputs include:
+- **RuntimeEndpoint** — The AgentCore Runtime `/invocations` endpoint (production)
+- **GatewayUrl** — The Gateway MCP endpoint
+- **GatewayArn** — The Gateway ARN (already injected into Runtime as env var)
+
+Test the deployed agent:
+
+```bash
+# Call the Runtime endpoint directly (Gateway ARN is auto-injected)
+curl -X POST <RuntimeEndpoint>/invocations \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Show me wireless headphones under $100", "customer_id": "CUST-001"}'
 ```
 
 ## Project Structure
@@ -234,13 +245,13 @@ ecommerce-agent-demo/
 
 ## Environment Variables
 
+All injected automatically by CloudFormation into AgentCore Runtime. No manual config needed for production.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENAI_API_KEY` | — | Bedrock long-term API key (required) |
-| `OPENAI_BASE_URL` | `https://bedrock-mantle.us-west-2.api.aws/v1` | Bedrock Mantle endpoint |
 | `BEDROCK_MODEL_ID` | `openai.gpt-oss-120b` | Bedrock model to use |
 | `AWS_REGION` | `us-west-2` | AWS region |
-| `GATEWAY_ARN` | — | AgentCore Gateway ARN |
+| `GATEWAY_ARN` | (injected by CFN) | AgentCore Gateway ARN — auto-discovered by Runtime |
 
 ## License
 

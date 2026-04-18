@@ -6,7 +6,7 @@ Description: >
 Parameters:
   ModelId:
     Type: String
-    Default: us.anthropic.claude-haiku-4-5-20250609-v1:0
+    Default: openai.gpt-oss-120b
     Description: Bedrock model ID for the agent
 
   AgentCodeS3Bucket:

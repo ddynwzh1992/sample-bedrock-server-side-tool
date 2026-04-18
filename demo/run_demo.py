@@ -54,7 +54,7 @@ def main():
     print(BANNER)
 
     # Check for custom model/region
-    model_id = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20250609-v1:0")
+    model_id = os.environ.get("BEDROCK_MODEL_ID", "openai.gpt-oss-120b")
     region = os.environ.get("AWS_REGION", "us-west-2")
 
     print(f"  Model: {model_id}")

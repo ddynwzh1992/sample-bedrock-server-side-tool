@@ -276,9 +276,11 @@ ecommerce-agent-demo/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BEDROCK_MODEL_ID` | `us.anthropic.claude-haiku-4-5-20250609-v1:0` | Bedrock model to use |
+| `BEDROCK_MODEL_ID` | `openai.gpt-oss-120b` | Bedrock model to use |
 | `AWS_REGION` | `us-west-2` | AWS region |
-| `GATEWAY_URL` | — | AgentCore Gateway MCP endpoint URL |
+| `OPENAI_API_KEY` | — | Bedrock long-term API key (for server-side mode via mantle endpoint) |
+| `OPENAI_BASE_URL` | `https://bedrock-mantle.<region>.api.aws/v1` | Bedrock Mantle endpoint |
+| `GATEWAY_URL` | — | AgentCore Gateway MCP endpoint URL (client-side mode) |
 | `GATEWAY_ARN` | — | AgentCore Gateway ARN (for server-side mode) |
 
 ## License

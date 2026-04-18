@@ -145,27 +145,27 @@ Resources:
               {"id": "BOOK-006", "name": "Atomic Habits", "category": "Books", "price": 18.99, "rating": 4.7, "reviews": 89012, "description": "Build good habits & break bad ones.", "in_stock": True},
           ]
           def handler(event, context):
-              tool_name = event.get("tool_name") or event.get("name", "")
-              params = event.get("parameters") or event.get("input", {})
-              if tool_name == "search_products":
-                  query = params.get("query", "").lower()
-                  category = params.get("category", "")
-                  max_price = float(params.get("max_price", 99999))
-                  min_price = float(params.get("min_price", 0))
-                  results = [p for p in PRODUCTS if (not category or p["category"].lower() == category.lower()) and min_price <= p["price"] <= max_price and (not query or query in f"{p['name']} {p['description']} {p['category']}".lower())]
-                  return {"products": results[:10], "total": len(results)}
-              elif tool_name == "get_product_details":
-                  pid = params.get("product_id", "")
+              # Gateway passes only the tool arguments as event (flat dict)
+              # Infer tool from argument keys
+              if "product_id" in event and "category" not in event and "query" not in event:
+                  pid = event["product_id"]
                   for p in PRODUCTS:
                       if p["id"] == pid: return {"product": p}
                   return {"error": f"Product '{pid}' not found"}
-              elif tool_name == "get_recommendations":
-                  category = params.get("category", "")
-                  limit = int(params.get("limit", 5))
+              elif "query" in event or "min_price" in event or "max_price" in event or "category" in event:
+                  query = (event.get("query") or "").lower()
+                  category = event.get("category", "")
+                  max_price = float(event.get("max_price", 99999))
+                  min_price = float(event.get("min_price", 0))
+                  results = [p for p in PRODUCTS if (not category or p["category"].lower() == category.lower()) and min_price <= p["price"] <= max_price and (not query or any(w in f"{p['name']} {p['description']} {p['category']}".lower() for w in query.split()))]
+                  return {"products": results[:10], "total": len(results)}
+              else:
+                  # get_recommendations (limit, category, or empty)
+                  category = event.get("category", "")
+                  limit = int(event.get("limit", 5))
                   pool = PRODUCTS if not category else [p for p in PRODUCTS if p["category"].lower() == category.lower()]
                   pool.sort(key=lambda x: (-x["rating"], -x["reviews"]))
                   return {"recommendations": pool[:limit]}
-              return {"error": f"Unknown tool: {tool_name}"}
       Environment:
         Variables:
           PRODUCTS_TABLE: !Ref ProductsTable
@@ -186,10 +186,16 @@ Resources:
           applied_coupons = {}
           COUPONS = {"WELCOME10": {"discount_percent": 10, "min_order": 0}, "SAVE20": {"discount_percent": 20, "min_order": 100}, "SPRING25": {"discount_percent": 25, "min_order": 75}, "TECH15": {"discount_percent": 15, "min_order": 200}}
           def handler(event, context):
-              tool_name = event.get("tool_name") or event.get("name", "")
-              params = event.get("parameters") or event.get("input", {})
-              if tool_name == "add_to_cart":
-                  cid, pid, qty = params["customer_id"], params["product_id"], int(params.get("quantity", 1))
+              # Gateway passes only tool arguments as event
+              # Infer tool: add_to_cart has product_id+customer_id, view_cart has only customer_id,
+              # remove_from_cart has customer_id+product_id (no quantity), apply_coupon has coupon_code
+              if "coupon_code" in event:
+                  cid, code = event["customer_id"], event["coupon_code"].upper()
+                  if code not in COUPONS: return {"status": "invalid", "code": code}
+                  applied_coupons[cid] = code
+                  return {"status": "applied", "code": code, "details": COUPONS[code]}
+              elif "product_id" in event and "quantity" in event:
+                  cid, pid, qty = event["customer_id"], event["product_id"], int(event.get("quantity", 1))
                   if cid not in carts: carts[cid] = []
                   for item in carts[cid]:
                       if item["product_id"] == pid:
@@ -197,19 +203,21 @@ Resources:
                           return {"status": "updated", "product_id": pid, "quantity": item["quantity"]}
                   carts[cid].append({"product_id": pid, "quantity": qty})
                   return {"status": "added", "product_id": pid, "quantity": qty}
-              elif tool_name == "view_cart":
-                  cid = params["customer_id"]
+              elif "product_id" in event:
+                  # Could be add_to_cart (no quantity specified) or remove_from_cart
+                  # Default to add if no other signal
+                  cid, pid = event["customer_id"], event["product_id"]
+                  if cid in carts and any(i["product_id"] == pid for i in carts.get(cid, [])):
+                      carts[cid] = [i for i in carts[cid] if i["product_id"] != pid]
+                      return {"status": "removed", "product_id": pid}
+                  else:
+                      if cid not in carts: carts[cid] = []
+                      carts[cid].append({"product_id": pid, "quantity": 1})
+                      return {"status": "added", "product_id": pid, "quantity": 1}
+              else:
+                  # view_cart — only customer_id
+                  cid = event.get("customer_id", "")
                   return {"items": carts.get(cid, []), "applied_coupon": applied_coupons.get(cid)}
-              elif tool_name == "remove_from_cart":
-                  cid, pid = params["customer_id"], params["product_id"]
-                  if cid in carts: carts[cid] = [i for i in carts[cid] if i["product_id"] != pid]
-                  return {"status": "removed", "product_id": pid}
-              elif tool_name == "apply_coupon":
-                  cid, code = params["customer_id"], params["coupon_code"].upper()
-                  if code not in COUPONS: return {"status": "invalid", "code": code}
-                  applied_coupons[cid] = code
-                  return {"status": "applied", "code": code, "details": COUPONS[code]}
-              return {"error": f"Unknown tool: {tool_name}"}
       Environment:
         Variables:
           CARTS_TABLE: !Ref CartsTable
@@ -229,26 +237,35 @@ Resources:
           from datetime import datetime, timedelta
           orders = {"ORD-20260401-001": {"order_id": "ORD-20260401-001", "customer_id": "CUST-001", "items": [{"name": "SoundWave Pro", "quantity": 1, "price": 79.99}], "total": 79.99, "status": "delivered"}, "ORD-20260410-002": {"order_id": "ORD-20260410-002", "customer_id": "CUST-001", "items": [{"name": "Air Fryer", "quantity": 1, "price": 99.99}], "total": 99.99, "status": "shipped", "tracking": "1Z999AA10123456784"}}
           def handler(event, context):
-              tool_name = event.get("tool_name") or event.get("name", "")
-              params = event.get("parameters") or event.get("input", {})
-              if tool_name == "checkout":
-                  oid = f"ORD-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
-                  orders[oid] = {"order_id": oid, "customer_id": params["customer_id"], "status": "confirmed", "payment": params.get("payment_method", "credit_card")}
-                  return {"status": "confirmed", "order_id": oid, "delivery": "3-5 business days"}
-              elif tool_name == "get_order_status":
-                  oid = params["order_id"]
-                  return orders.get(oid, {"error": f"Order '{oid}' not found"})
-              elif tool_name == "list_orders":
-                  cid = params["customer_id"]
-                  return {"orders": [o for o in orders.values() if o.get("customer_id") == cid]}
-              elif tool_name == "request_return":
-                  oid = params["order_id"]
+              # Gateway passes only tool arguments as event
+              # Infer: checkout has customer_id + optional payment_method (no order_id)
+              # get_order_status has order_id only, list_orders has customer_id only,
+              # request_return has order_id + reason
+              if "reason" in event:
+                  oid = event["order_id"]
                   if oid not in orders: return {"error": f"Order '{oid}' not found"}
                   if orders[oid]["status"] not in ("delivered", "shipped"): return {"error": f"Cannot return — status is {orders[oid]['status']}"}
                   rid = f"RET-{uuid.uuid4().hex[:8].upper()}"
                   orders[oid]["status"] = "return_requested"
-                  return {"status": "return_requested", "return_id": rid, "reason": params.get("reason", "")}
-              return {"error": f"Unknown tool: {tool_name}"}
+                  return {"status": "return_requested", "return_id": rid, "reason": event.get("reason", "")}
+              elif "order_id" in event:
+                  oid = event["order_id"]
+                  return orders.get(oid, {"error": f"Order '{oid}' not found"})
+              elif "payment_method" in event or ("customer_id" in event and len(event) <= 2):
+                  # checkout or list_orders — if payment_method present it's checkout
+                  if "payment_method" in event:
+                      oid = f"ORD-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+                      orders[oid] = {"order_id": oid, "customer_id": event["customer_id"], "status": "confirmed", "payment": event.get("payment_method", "credit_card")}
+                      return {"status": "confirmed", "order_id": oid, "delivery": "3-5 business days"}
+                  else:
+                      cid = event["customer_id"]
+                      return {"orders": [o for o in orders.values() if o.get("customer_id") == cid]}
+              else:
+                  # Default: list orders if customer_id present
+                  cid = event.get("customer_id", "")
+                  if cid:
+                      return {"orders": [o for o in orders.values() if o.get("customer_id") == cid]}
+                  return {"error": "Missing required parameters"}
       Environment:
         Variables:
           ORDERS_TABLE: !Ref OrdersTable

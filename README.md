@@ -153,17 +153,21 @@ aws cloudformation describe-stacks --stack-name shopassist-demo \
 ```
 
 The stack outputs include:
-- **RuntimeEndpoint** — The AgentCore Runtime `/invocations` endpoint (production)
+- **GatewayArn** — The Gateway ARN (use for server-side tool execution)
 - **GatewayUrl** — The Gateway MCP endpoint
-- **GatewayArn** — The Gateway ARN (already injected into Runtime as env var)
+- **RuntimeArn** — The AgentCore Runtime ARN
 
-Test the deployed agent:
+Test server-side tool execution:
 
 ```bash
-# Call the Runtime endpoint directly (Gateway ARN is auto-injected)
-curl -X POST <RuntimeEndpoint>/invocations \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Show me wireless headphones under $100", "customer_id": "CUST-001"}'
+# Get the Gateway ARN from stack outputs
+GATEWAY_ARN=$(aws cloudformation describe-stacks --stack-name shopassist-demo \
+  --query 'Stacks[0].Outputs[?OutputKey==`GatewayArn`].OutputValue' --output text --region us-west-2)
+
+# Run the server-side demo (streaming Responses API + MCP connector)
+pip install boto3 requests strands-agents
+export GATEWAY_ARN
+python -m agent.serverside_agent
 ```
 
 ## Project Structure
@@ -218,16 +222,17 @@ ecommerce-agent-demo/
 ## Key Concepts Demonstrated
 
 ### Bedrock Server-Side Tool Execution
-- Uses OpenAI SDK pointing to **bedrock-mantle** endpoint
-- `client.responses.create()` with MCP tool type and Gateway ARN
-- Single API call — no client-side orchestration loop
-- Automatic tool discovery, selection, execution, and result injection
+- Streaming Responses API via **bedrock-mantle** endpoint (`/v1/responses`)
+- MCP tool type with `connector_id` pointing to Gateway ARN
+- SigV4 authentication — standard AWS credentials, no API keys
+- Single streaming call — Bedrock handles tool discovery → model reasoning → tool execution → result injection
+- Gateway passes **only the arguments** to Lambda (no tool name in event)
 
 ### AgentCore Gateway
 - Converts Lambda functions into MCP-compatible tools
 - Single managed endpoint for all tools
-- Built-in auth (IAM, OAuth, JWT)
-- Semantic tool search for large tool collections
+- `CredentialProviderConfigurations: GATEWAY_IAM_ROLE` for Lambda targets
+- `ToolSchema.InlinePayload` with `SchemaDefinition` format (Type/Properties/Required)
 - Works with any agent framework (Strands, LangGraph, CrewAI)
 
 ### AgentCore Runtime

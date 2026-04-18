@@ -7,90 +7,110 @@ An AI-powered e-commerce shopping assistant demonstrating how **Amazon Bedrock e
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          CloudFormation Stack                               │
-│                                                                             │
-│  ┌──────────┐    ┌─────────────────────────────────────────────────────┐    │
-│  │  Client   │    │              Amazon Bedrock (Mantle)                │    │
-│  │           │    │                                                     │    │
-│  │ CLI / App ├───►│  Responses API  ──►  GPT OSS 120B                  │    │
-│  │           │    │  POST /v1/responses   (server-side tool execution)  │    │
-│  └──────────┘    │       │                      │                      │    │
-│       ▲          │       │ ① Discover tools     │ ② Model decides to   │    │
-│       │          │       │    (MCP list_tools)   │    call a tool       │    │
-│       │          └───────┼──────────────────────┼──────────────────────┘    │
-│       │                  ▼                      ▼                           │
-│       │          ┌─────────────────────────────────────────────────┐        │
-│       │          │          AgentCore Gateway (MCP Endpoint)       │        │
-│       │          │                                                 │        │
-│       │          │   ③ Routes tool call to correct Lambda target   │        │
-│       │          │      (IAM authenticated, auto-discovered)       │        │
-│       │          └────────┬──────────────┬──────────────┬──────────┘        │
-│       │                   │              │              │                   │
-│       │                   ▼              ▼              ▼                   │
-│       │          ┌──────────────┐ ┌────────────┐ ┌─────────────┐           │
-│       │          │   Products   │ │    Cart    │ │   Orders    │           │
-│       │          │   Lambda     │ │   Lambda   │ │   Lambda    │           │
-│       │          ├──────────────┤ ├────────────┤ ├─────────────┤           │
-│       │          │search_products│ │add_to_cart │ │checkout     │           │
-│       │          │get_details   │ │view_cart   │ │order_status │           │
-│       │          │get_recommend │ │remove_item │ │list_orders  │           │
-│       │          │              │ │apply_coupon│ │request_return│          │
-│       │          └──────┬───────┘ └─────┬──────┘ └──────┬──────┘           │
-│       │                 │               │               │                  │
-│       │                 ▼               ▼               ▼                  │
-│       │          ┌──────────────┐ ┌────────────┐ ┌─────────────┐           │
-│       │          │  DynamoDB    │ │  DynamoDB  │ │  DynamoDB   │           │
-│       │          │  Products    │ │   Carts    │ │   Orders    │           │
-│       │          └──────────────┘ └────────────┘ └─────────────┘           │
-│       │                                                                    │
-│       │   ④ Results injected back into model context automatically         │
-│       │   ⑤ Model generates final response with tool results              │
-│       │                                                                    │
-│       └─── ⑥ Streaming response returned to client ◄──────────────────    │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                    AgentCore Runtime (Optional)                      │    │
-│  │  Managed Python 3.12 hosting  │  Auto-scaling  │  /invocations     │    │
-│  │  Strands Agent + Bedrock SDK  │  Observability │  Health checks    │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                            CloudFormation Stack                                  │
+│                                                                                  │
+│  ┌──────────┐    ┌──────────────────────────────────────────────────────────┐    │
+│  │          │    │              AgentCore Runtime                            │    │
+│  │  Client  │    │         Managed Python 3.12 Hosting                      │    │
+│  │          │    │     Auto-scaling · Health Checks · Observability          │    │
+│  │ CLI/App/ ├───►│                                                          │    │
+│  │ API Call │    │  POST /invocations                                       │    │
+│  │          │    │    │                                                      │    │
+│  └──────────┘    │    ▼                                                      │    │
+│       ▲          │  ┌────────────────────────────────────────────────────┐   │    │
+│       │          │  │  runtime_agent.py (ShopAssist Agent)              │   │    │
+│       │          │  │                                                    │   │    │
+│       │          │  │  Calls Bedrock Responses API with Gateway ARN     │   │    │
+│       │          │  │  (server-side tool execution — no orchestration)  │   │    │
+│       │          │  └───────────────────────┬────────────────────────────┘   │    │
+│       │          └──────────────────────────┼───────────────────────────────┘    │
+│       │                                     │                                    │
+│       │                                     ▼                                    │
+│       │          ┌──────────────────────────────────────────────────────────┐    │
+│       │          │              Amazon Bedrock (Mantle)                      │    │
+│       │          │                                                          │    │
+│       │          │  Responses API  ──►  GPT OSS 120B                        │    │
+│       │          │  /v1/responses        (reasoning + tool selection)        │    │
+│       │          │       │                      │                            │    │
+│       │          │       │ ① Discover tools     │ ② Model decides to        │    │
+│       │          │       │    (MCP list_tools)   │    call a tool            │    │
+│       │          └───────┼──────────────────────┼───────────────────────────┘    │
+│       │                  ▼                      ▼                                │
+│       │          ┌──────────────────────────────────────────────────────────┐    │
+│       │          │            AgentCore Gateway (MCP Endpoint)              │    │
+│       │          │                                                          │    │
+│       │          │   ③ Routes tool call to correct Lambda target            │    │
+│       │          │      IAM authenticated · Tool discovery · 11 tools       │    │
+│       │          └────────┬──────────────────┬──────────────────┬───────────┘    │
+│       │                   │                  │                  │                │
+│       │                   ▼                  ▼                  ▼                │
+│       │          ┌──────────────┐   ┌──────────────┐   ┌──────────────┐         │
+│       │          │   Products   │   │     Cart     │   │    Orders    │         │
+│       │          │   Lambda     │   │    Lambda    │   │    Lambda    │         │
+│       │          ├──────────────┤   ├──────────────┤   ├──────────────┤         │
+│       │          │search_products│  │add_to_cart   │   │checkout      │         │
+│       │          │get_details   │   │view_cart     │   │order_status  │         │
+│       │          │get_recommend │   │remove_item   │   │list_orders   │         │
+│       │          │              │   │apply_coupon  │   │request_return│         │
+│       │          └──────┬───────┘   └──────┬───────┘   └──────┬───────┘         │
+│       │                 │                  │                  │                  │
+│       │                 ▼                  ▼                  ▼                  │
+│       │          ┌──────────────┐   ┌──────────────┐   ┌──────────────┐         │
+│       │          │  DynamoDB    │   │  DynamoDB    │   │  DynamoDB    │         │
+│       │          │  Products    │   │   Carts      │   │   Orders     │         │
+│       │          └──────────────┘   └──────────────┘   └──────────────┘         │
+│       │                                                                         │
+│       │   ④ Tool results injected back into model context (server-side)         │
+│       │   ⑤ Model generates final response with tool results                   │
+│       │                                                                         │
+│       └──── ⑥ Response returned to client via Runtime ◄─────────────────────   │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Request Flow (Server-Side Tool Execution)
+### Request Flow
 
 ```
-┌────────┐          ┌──────────────┐          ┌─────────┐          ┌────────┐
-│ Client │          │ Responses API│          │ Gateway │          │ Lambda │
-└───┬────┘          └──────┬───────┘          └────┬────┘          └───┬────┘
-    │                      │                       │                   │
-    │  POST /v1/responses  │                       │                   │
-    │  + Gateway ARN       │                       │                   │
-    │─────────────────────►│                       │                   │
-    │                      │                       │                   │
-    │                      │  ① MCP list_tools     │                   │
-    │                      │──────────────────────►│                   │
-    │                      │  tools: [11 tools]    │                   │
-    │                      │◄──────────────────────│                   │
-    │                      │                       │                   │
-    │                      │  ② Model reasons:     │                   │
-    │                      │  "search_products"    │                   │
-    │                      │                       │                   │
-    │                      │  ③ MCP tools/call     │                   │
-    │                      │──────────────────────►│  ④ Invoke Lambda  │
+┌────────┐     ┌─────────┐     ┌──────────────┐     ┌─────────┐     ┌────────┐
+│ Client │     │ Runtime │     │ Responses API│     │ Gateway │     │ Lambda │
+└───┬────┘     └────┬────┘     └──────┬───────┘     └────┬────┘     └───┬────┘
+    │               │                 │                   │              │
+    │ POST          │                 │                   │              │
+    │ /invocations  │                 │                   │              │
+    │──────────────►│                 │                   │              │
+    │               │                 │                   │              │
+    │               │ POST            │                   │              │
+    │               │ /v1/responses   │                   │              │
+    │               │ + Gateway ARN   │                   │              │
+    │               │────────────────►│                   │              │
+    │               │                 │                   │              │
+    │               │                 │ ① MCP list_tools  │              │
+    │               │                 │──────────────────►│              │
+    │               │                 │ tools: [11 tools] │              │
+    │               │                 │◄──────────────────│              │
+    │               │                 │                   │              │
+    │               │                 │ ② Model reasons:  │              │
+    │               │                 │ "search_products" │              │
+    │               │                 │                   │              │
+    │               │                 │ ③ MCP tools/call  │              │
+    │               │                 │──────────────────►│ ④ Invoke     │
+    │               │                 │                   │─────────────►│
+    │               │                 │                   │ result       │
+    │               │                 │                   │◄─────────────│
+    │               │                 │ tool result       │              │
+    │               │                 │◄──────────────────│              │
+    │               │                 │                   │              │
+    │               │                 │ ⑤ Model generates │              │
+    │               │                 │ final response    │              │
+    │               │                 │                   │              │
+    │               │ ⑥ SSE stream    │                   │              │
+    │               │◄────────────────│                   │              │
+    │               │                 │                   │              │
+    │ ⑦ JSON        │                 │                   │              │
+    │ response      │                 │                   │              │
+    │◄──────────────│                 │                   │              │
     │                      │                       │──────────────────►│
-    │                      │                       │  products data    │
-    │                      │                       │◄──────────────────│
-    │                      │  tool result          │                   │
-    │                      │◄──────────────────────│                   │
-    │                      │                       │                   │
-    │                      │  ⑤ Model generates    │                   │
-    │                      │  final response       │                   │
-    │                      │                       │                   │
-    │  ⑥ SSE stream:       │                       │                   │
-    │  tool events + text  │                       │                   │
-    │◄─────────────────────│                       │                   │
-    │                      │                       │                   │
 ```
 
 ### Why Server-Side Tool Execution?
@@ -104,6 +124,20 @@ An AI-powered e-commerce shopping assistant demonstrating how **Amazon Bedrock e
 | **Scaling** | Client must handle concurrency | Bedrock + Lambda auto-scale |
 
 ## How It Works
+
+### Full Production Flow
+
+```
+Client → AgentCore Runtime → Responses API → GPT OSS 120B → AgentCore Gateway → Lambda → DynamoDB
+               /invocations       (bedrock-mantle)      (server-side tool execution)
+```
+
+1. Client sends a POST to AgentCore Runtime `/invocations`
+2. Runtime agent calls Bedrock Responses API with the Gateway ARN
+3. Bedrock discovers tools from Gateway, model reasons and selects tools
+4. Bedrock executes tools via Gateway → Lambda (all server-side)
+5. Model generates final response with tool results
+6. Runtime returns JSON response to client
 
 ### Single API Call — That's It
 
@@ -185,17 +219,30 @@ This creates **everything** in one command:
 - 3 DynamoDB tables (Products, Carts, Orders)
 - 3 Lambda functions with 11 tool handlers
 - AgentCore Gateway (MCP endpoint) with 3 Lambda targets
-- AgentCore Runtime hosting the Strands agent
+- AgentCore Runtime hosting the ShopAssist agent (calls Responses API internally)
 - All IAM roles with least-privilege policies
 
 ### Test
 
 ```bash
-# Get Gateway ARN
+# Get Runtime endpoint and Gateway ARN from stack outputs
+aws cloudformation describe-stacks --stack-name shopassist-demo \
+  --query 'Stacks[0].Outputs' --output table --region us-west-2
+
+# Option 1: Call via AgentCore Runtime (production path)
+RUNTIME_ARN=$(aws cloudformation describe-stacks --stack-name shopassist-demo \
+  --query 'Stacks[0].Outputs[?OutputKey==`RuntimeArn`].OutputValue' --output text --region us-west-2)
+
+aws bedrock-agentcore invoke-agent-runtime \
+  --agent-runtime-id $(echo $RUNTIME_ARN | awk -F/ '{print $2}') \
+  --region us-west-2 \
+  --body '{"query": "Show me wireless headphones under $100", "customer_id": "CUST-001"}' \
+  output.json && cat output.json
+
+# Option 2: Run the server-side demo locally (calls Responses API directly)
 GATEWAY_ARN=$(aws cloudformation describe-stacks --stack-name shopassist-demo \
   --query 'Stacks[0].Outputs[?OutputKey==`GatewayArn`].OutputValue' --output text --region us-west-2)
 
-# Run interactive demo
 pip install boto3 requests strands-agents
 export GATEWAY_ARN
 python -m agent.serverside_agent
@@ -268,11 +315,12 @@ ecommerce-agent-demo/
 
 ### AgentCore Runtime
 
-- Managed Python 3.12 hosting for AI agents
+- Managed Python 3.12 hosting — the agent's production "home"
+- Receives `/invocations` → calls Responses API with server-side tool execution internally
 - S3 code package deployment (like Lambda, but for long-running agents)
-- Built-in `/invocations` and `/ping` endpoints
-- Auto-scaling, observability, and lifecycle management
-- Gateway ARN auto-injected via environment variables
+- Built-in `/ping` health checks, auto-scaling, and observability
+- Gateway ARN auto-injected via `EnvironmentVariables` in CloudFormation
+- Native HTTP server for fast startup (no SDK dependency overhead)
 
 ### Model Support
 

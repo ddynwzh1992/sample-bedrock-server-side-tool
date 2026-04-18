@@ -35,7 +35,7 @@ python demo/run_demo.py
 ### Custom Model
 ```bash
 # Use a different model
-export BEDROCK_MODEL_ID="us.anthropic.claude-sonnet-4-20250514-v1:0"
+export BEDROCK_MODEL_ID="us.anthropic.claude-haiku-4-5-20250609-v1:0"
 export AWS_REGION="us-west-2"
 python demo/run_demo.py
 ```

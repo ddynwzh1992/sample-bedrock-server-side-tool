@@ -56,7 +56,7 @@ def invoke(context: InvocationContext) -> dict[str, Any]:
 
     # Create agent (stateless per request; state lives in DynamoDB in production)
     model = BedrockModel(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
+        model_id="us.anthropic.claude-haiku-4-5-20250609-v1:0",
         streaming=False,  # Non-streaming for Runtime compatibility
     )
 

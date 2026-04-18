@@ -276,7 +276,7 @@ ecommerce-agent-demo/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BEDROCK_MODEL_ID` | `us.anthropic.claude-sonnet-4-20250514-v1:0` | Bedrock model to use |
+| `BEDROCK_MODEL_ID` | `us.anthropic.claude-haiku-4-5-20250609-v1:0` | Bedrock model to use |
 | `AWS_REGION` | `us-west-2` | AWS region |
 | `GATEWAY_URL` | — | AgentCore Gateway MCP endpoint URL |
 | `GATEWAY_ARN` | — | AgentCore Gateway ARN (for server-side mode) |

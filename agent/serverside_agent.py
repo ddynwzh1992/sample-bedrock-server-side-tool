@@ -13,7 +13,7 @@ import boto3
 def create_response_with_server_side_tools(
     user_message: str,
     gateway_arn: str,
-    model_id: str = "us.anthropic.claude-sonnet-4-20250514-v1:0",
+    model_id: str = "us.anthropic.claude-haiku-4-5-20250609-v1:0",
     region: str = "us-west-2",
     system_prompt: str = "You are ShopAssist, an AI-powered e-commerce shopping assistant.",
 ) -> dict:
@@ -58,7 +58,7 @@ def create_response_with_server_side_tools(
     return response
 
 
-def run_server_side_demo(gateway_arn: str, model_id: str = "us.anthropic.claude-sonnet-4-20250514-v1:0"):
+def run_server_side_demo(gateway_arn: str, model_id: str = "us.anthropic.claude-haiku-4-5-20250609-v1:0"):
     """Run interactive demo using server-side tool execution."""
     print("🛍️  ShopAssist (Server-Side Tool Execution Mode)")
     print(f"   Gateway ARN: {gateway_arn}")

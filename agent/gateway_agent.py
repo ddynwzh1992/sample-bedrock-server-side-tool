@@ -36,7 +36,7 @@ def get_all_tools(client: MCPClient) -> list:
 
 def create_gateway_agent(
     gateway_url: str,
-    model_id: str = "us.anthropic.claude-sonnet-4-20250514-v1:0",
+    model_id: str = "us.anthropic.claude-haiku-4-5-20250609-v1:0",
     region: str = "us-west-2",
 ) -> tuple[Agent, MCPClient]:
     """Create agent connected to AgentCore Gateway.
@@ -65,7 +65,7 @@ def create_gateway_agent(
     return model, mcp_client
 
 
-def run_gateway_agent(gateway_url: str, model_id: str = "us.anthropic.claude-sonnet-4-20250514-v1:0"):
+def run_gateway_agent(gateway_url: str, model_id: str = "us.anthropic.claude-haiku-4-5-20250609-v1:0"):
     """Run the gateway agent in interactive mode."""
     model, mcp_client = create_gateway_agent(gateway_url, model_id)
 

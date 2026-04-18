@@ -21,13 +21,12 @@ graph TB
     end
 
     subgraph "Amazon Bedrock"
-        SA --> |"Client-Side Mode"| BR[Bedrock Model<br/>Claude Sonnet]
-        SA --> |"Server-Side Mode"| RA[Responses API<br/>toolExecution: enabled]
-        RA --> BR
+        SA --> RA[Responses API<br/>Server-Side Tool Execution]
+        RA --> MODEL[GPT OSS 120B<br/>bedrock-mantle endpoint]
     end
 
     subgraph "AgentCore Gateway"
-        BR --> |tool calls| GW[Gateway MCP Endpoint<br/>Tool Discovery + Execution]
+        MODEL --> |tool calls| GW[Gateway MCP Endpoint<br/>Tool Discovery + Execution]
         GW --> |"search_products<br/>get_product_details<br/>get_recommendations"| LP[Lambda: Products]
         GW --> |"add_to_cart<br/>view_cart<br/>remove_from_cart<br/>apply_coupon"| LC[Lambda: Cart]
         GW --> |"checkout<br/>get_order_status<br/>list_orders<br/>request_return"| LO[Lambda: Orders]
@@ -39,46 +38,31 @@ graph TB
         LO --> DB3[(DynamoDB<br/>Orders)]
     end
 
+    subgraph "AgentCore Runtime"
+        RT[Managed Python Runtime<br/>Auto-scaling + Observability] --> SA
+    end
+
     style GW fill:#ff9900,color:#000
-    style BR fill:#8b5cf6,color:#fff
+    style MODEL fill:#8b5cf6,color:#fff
     style SA fill:#06b6d4,color:#fff
+    style RT fill:#10b981,color:#fff
 ```
 
-## Three Execution Modes
+## How It Works
 
-### Mode 1: Local (Strands Agent + @tool functions)
-
-```
-Customer → Strands Agent → Bedrock Model → tool_use → local Python function
-```
-
-For development and testing. No infrastructure needed.
-
-### Mode 2: Client-Side (Strands Agent + MCP Client → Gateway)
+### Server-Side Tool Execution (Bedrock Responses API)
 
 ```
-Customer → Strands Agent → Bedrock Model → returns tool_use
-                ↓ (client executes)
-           MCP Client → AgentCore Gateway → Lambda
-                ↓ (sends result back)
-           Strands Agent → Bedrock Model → final response
-```
-
-The agent orchestrates the tool execution loop client-side.
-
-### Mode 3: Server-Side (Bedrock Responses API — Single Call)
-
-```
-Customer → Responses API (with Gateway ARN) → Bedrock Model
+Customer → Responses API (with Gateway ARN) → GPT OSS 120B (bedrock-mantle)
                     ↓ (server executes tools automatically)
               AgentCore Gateway → Lambda → result injected
                     ↓
               Final response returned in one API call
 ```
 
-No client-side orchestration. Bedrock handles tool discovery, selection, execution, and result injection.
+No client-side orchestration loop. Bedrock handles tool discovery, selection, execution, and result injection — all in a single API call.
 
-### Production: Agent on AgentCore Runtime
+### Production Deployment (AgentCore Runtime)
 
 ```
 Client → AgentCore Runtime (/invocations) → Python Agent (Strands SDK) → Bedrock + Gateway
@@ -86,9 +70,17 @@ Client → AgentCore Runtime (/invocations) → Python Agent (Strands SDK) → B
 
 The agent is deployed as a managed Python service on AgentCore Runtime (default mode) with auto-scaling, health checks, and observability. No container needed — just upload your Python code to S3.
 
-## Quick Start (Local Mode)
+## Quick Start
 
-No AWS deployment needed — uses in-memory mock data with 50+ products.
+### Prerequisites
+
+- AWS account with Bedrock model access enabled for `openai.gpt-oss-120b`
+- A Bedrock long-term API key ([create one here](https://console.aws.amazon.com/bedrock/home#/api-keys/long-term/create))
+- Python 3.12+
+
+### Local Development (Mock Data)
+
+Uses in-memory mock data with 50+ products — no AWS deployment needed for testing:
 
 ```bash
 # 1. Clone the repo
@@ -96,13 +88,21 @@ git clone https://github.com/ddynwzh1992/sample-bedrock-server-side-tool.git
 cd sample-bedrock-server-side-tool
 
 # 2. Install dependencies
-pip install strands-agents boto3
+pip install strands-agents boto3 openai
 
-# 3. Configure AWS credentials (for Bedrock model access)
-aws configure  # Need access to Claude Sonnet in us-west-2
-
-# 4. Run the demo
+# 3. Run the demo (local mock mode)
 python demo/run_demo.py
+```
+
+### Server-Side Mode (Requires Deployed Gateway)
+
+```bash
+# Set API key
+export OPENAI_API_KEY="<your-bedrock-api-key>"
+export OPENAI_BASE_URL="https://bedrock-mantle.us-west-2.api.aws/v1"
+
+# Run with server-side tool execution
+python -m agent.serverside_agent <GATEWAY_ARN>
 ```
 
 ### Example Conversation
@@ -147,8 +147,6 @@ aws s3 mb s3://my-shopassist-artifacts --region us-west-2
 ./infrastructure/package_agent.sh my-shopassist-artifacts
 ```
 
-This zips the agent Python code + dependencies and uploads to S3.
-
 ### Step 2: One-Click CloudFormation Deploy
 
 Deploys **everything** in one command — DynamoDB, Lambda tools, AgentCore Gateway + Targets, and AgentCore Runtime:
@@ -168,7 +166,7 @@ This creates:
 - **3 DynamoDB tables** (Products, Carts, Orders)
 - **3 Lambda functions** with inline tool code
 - **AgentCore Gateway** (MCP endpoint) with 3 Lambda targets and inline tool schemas
-- **AgentCore Runtime** (Python 3.12, default mode) hosting the agent directly — no container needed
+- **AgentCore Runtime** (Python 3.12, default mode) hosting the agent directly
 - All IAM roles with least-privilege policies
 
 ### Step 3: Get Outputs & Test
@@ -178,10 +176,8 @@ This creates:
 aws cloudformation describe-stacks --stack-name shopassist-demo \
   --query 'Stacks[0].Outputs' --output table
 
-# Use the Gateway URL for client-side MCP connection
-python -m agent.gateway_agent <GatewayUrl from output>
-
-# Use the Gateway ARN for server-side tool execution
+# Test server-side tool execution
+export OPENAI_API_KEY="<your-bedrock-api-key>"
 python -m agent.serverside_agent <GatewayArn from output>
 ```
 
@@ -205,8 +201,8 @@ ecommerce-agent-demo/
 │   ├── __init__.py
 │   ├── data.py                        # 50+ sample products, in-memory state
 │   ├── local_agent.py                 # Local mode: Strands Agent + @tool functions
-│   ├── gateway_agent.py              # Gateway mode: MCP Client → AgentCore Gateway
-│   ├── serverside_agent.py           # Server-side mode: Responses API
+│   ├── gateway_agent.py              # Client-side: MCP Client → AgentCore Gateway
+│   ├── serverside_agent.py           # Server-side: Responses API (OpenAI SDK + mantle)
 │   └── runtime_agent.py             # AgentCore Runtime deployment wrapper
 ├── demo/
 │   └── run_demo.py                    # Interactive CLI demo
@@ -245,15 +241,9 @@ ecommerce-agent-demo/
 
 ## Key Concepts Demonstrated
 
-### Strands Agents SDK
-- `@tool` decorator converts any Python function into an agent tool
-- Docstrings automatically become LLM-facing tool descriptions
-- `Agent()` class handles the full agent loop (model → tool → model)
-- `BedrockModel` for Amazon Bedrock integration
-
 ### Bedrock Server-Side Tool Execution
-- `create_response()` with `toolExecution={"enabled": True}`
-- `mcpServerConnector` tool type with Gateway ARN
+- Uses OpenAI SDK pointing to **bedrock-mantle** endpoint
+- `client.responses.create()` with MCP tool type and Gateway ARN
 - Single API call — no client-side orchestration loop
 - Automatic tool discovery, selection, execution, and result injection
 
@@ -270,18 +260,22 @@ ecommerce-agent-demo/
 - Alternative: Container mode with ECR image
 - Built-in `/invocations` and `/ping` endpoints
 - Auto-scaling, observability, and lifecycle management
-- Framework-agnostic: Strands, LangGraph, CrewAI all supported
+
+### Strands Agents SDK
+- `@tool` decorator converts any Python function into an agent tool
+- Docstrings automatically become LLM-facing tool descriptions
+- `Agent()` class handles the full agent loop
+- `BedrockModel` for Amazon Bedrock integration
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `OPENAI_API_KEY` | — | Bedrock long-term API key (required) |
+| `OPENAI_BASE_URL` | `https://bedrock-mantle.us-west-2.api.aws/v1` | Bedrock Mantle endpoint |
 | `BEDROCK_MODEL_ID` | `openai.gpt-oss-120b` | Bedrock model to use |
 | `AWS_REGION` | `us-west-2` | AWS region |
-| `OPENAI_API_KEY` | — | Bedrock long-term API key (for server-side mode via mantle endpoint) |
-| `OPENAI_BASE_URL` | `https://bedrock-mantle.<region>.api.aws/v1` | Bedrock Mantle endpoint |
-| `GATEWAY_URL` | — | AgentCore Gateway MCP endpoint URL (client-side mode) |
-| `GATEWAY_ARN` | — | AgentCore Gateway ARN (for server-side mode) |
+| `GATEWAY_ARN` | — | AgentCore Gateway ARN |
 
 ## License
 

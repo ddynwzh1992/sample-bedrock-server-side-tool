@@ -1,49 +1,43 @@
 # ShopAssist: E-Commerce Agent Demo
 
-> **Bedrock Server-Side Tool Execution + AgentCore Gateway + AgentCore Runtime + Strands Agents SDK**
+> **Bedrock Server-Side Tool Execution + AgentCore Gateway + AgentCore Runtime**
 
-An AI-powered e-commerce shopping assistant demonstrating how **Amazon Bedrock executes tools server-side** — the model discovers, selects, and invokes tools automatically with zero client-side orchestration.
+An AI-powered e-commerce shopping assistant where **Amazon Bedrock executes tools server-side** — the model discovers, selects, and invokes tools automatically with zero client-side orchestration.
 
-## Architecture Overview
+## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────┐
-│                            CloudFormation Stack                                  │
 │                                                                                  │
 │  ┌──────────┐    ┌──────────────────────────────────────────────────────────┐    │
 │  │          │    │              AgentCore Runtime                            │    │
-│  │  Client  │    │         Managed Python 3.12 Hosting                      │    │
-│  │          │    │     Auto-scaling · Health Checks · Observability          │    │
-│  │ CLI/App/ ├───►│                                                          │    │
-│  │ API Call │    │  POST /invocations                                       │    │
-│  │          │    │    │                                                      │    │
+│  │  Client  │    │         Managed Python 3.12 · Auto-scaling               │    │
+│  │          │    │                                                          │    │
+│  │ CLI/App/ ├───►│  POST /invocations                                      │    │
+│  │ API Call │    │    │                                                      │    │
 │  └──────────┘    │    ▼                                                      │    │
 │       ▲          │  ┌────────────────────────────────────────────────────┐   │    │
-│       │          │  │  runtime_agent.py (ShopAssist Agent)              │   │    │
-│       │          │  │                                                    │   │    │
-│       │          │  │  Calls Bedrock Responses API with Gateway ARN     │   │    │
-│       │          │  │  (server-side tool execution — no orchestration)  │   │    │
+│       │          │  │  shopassist_runtime.py                            │   │    │
+│       │          │  │  Calls Bedrock Responses API (Mantle)             │   │    │
+│       │          │  │  with Gateway ARN as MCP connector                │   │    │
 │       │          │  └───────────────────────┬────────────────────────────┘   │    │
 │       │          └──────────────────────────┼───────────────────────────────┘    │
 │       │                                     │                                    │
 │       │                                     ▼                                    │
 │       │          ┌──────────────────────────────────────────────────────────┐    │
-│       │          │              Amazon Bedrock (Mantle)                      │    │
+│       │          │         Amazon Bedrock Responses API (Mantle)            │    │
 │       │          │                                                          │    │
-│       │          │  Responses API  ──►  GPT OSS 120B                        │    │
-│       │          │  /v1/responses        (reasoning + tool selection)        │    │
+│       │          │  GPT OSS 120B  ───►  reasons + selects tools            │    │
 │       │          │       │                      │                            │    │
-│       │          │       │ ① Discover tools     │ ② Model decides to        │    │
-│       │          │       │    (MCP list_tools)   │    call a tool            │    │
+│       │          │       │ ① Discover tools     │ ② Execute tool call       │    │
+│       │          │       │    (MCP list_tools)   │    (MCP tools/call)       │    │
 │       │          └───────┼──────────────────────┼───────────────────────────┘    │
 │       │                  ▼                      ▼                                │
 │       │          ┌──────────────────────────────────────────────────────────┐    │
 │       │          │            AgentCore Gateway (MCP Endpoint)              │    │
 │       │          │                                                          │    │
-│       │          │   ③ Routes tool call to correct Lambda target            │    │
-│       │          │      IAM authenticated · Tool discovery · 11 tools       │    │
+│       │          │   ③ Routes tool calls to Lambda targets (IAM auth)       │    │
 │       │          └────────┬──────────────────┬──────────────────┬───────────┘    │
-│       │                   │                  │                  │                │
 │       │                   ▼                  ▼                  ▼                │
 │       │          ┌──────────────┐   ┌──────────────┐   ┌──────────────┐         │
 │       │          │   Products   │   │     Cart     │   │    Orders    │         │
@@ -54,198 +48,117 @@ An AI-powered e-commerce shopping assistant demonstrating how **Amazon Bedrock e
 │       │          │get_recommend │   │remove_item   │   │list_orders   │         │
 │       │          │              │   │apply_coupon  │   │request_return│         │
 │       │          └──────┬───────┘   └──────┬───────┘   └──────┬───────┘         │
-│       │                 │                  │                  │                  │
 │       │                 ▼                  ▼                  ▼                  │
 │       │          ┌──────────────┐   ┌──────────────┐   ┌──────────────┐         │
 │       │          │  DynamoDB    │   │  DynamoDB    │   │  DynamoDB    │         │
 │       │          │  Products    │   │   Carts      │   │   Orders     │         │
 │       │          └──────────────┘   └──────────────┘   └──────────────┘         │
 │       │                                                                         │
-│       │   ④ Tool results injected back into model context (server-side)         │
-│       │   ⑤ Model generates final response with tool results                   │
-│       │                                                                         │
-│       └──── ⑥ Response returned to client via Runtime ◄─────────────────────   │
+│       └──── ④ Response returned via Runtime (tool results + final answer)       │
 │                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Request Flow
-
-```
-┌────────┐     ┌─────────┐     ┌──────────────┐     ┌─────────┐     ┌────────┐
-│ Client │     │ Runtime │     │ Responses API│     │ Gateway │     │ Lambda │
-└───┬────┘     └────┬────┘     └──────┬───────┘     └────┬────┘     └───┬────┘
-    │               │                 │                   │              │
-    │ POST          │                 │                   │              │
-    │ /invocations  │                 │                   │              │
-    │──────────────►│                 │                   │              │
-    │               │                 │                   │              │
-    │               │ POST            │                   │              │
-    │               │ /v1/responses   │                   │              │
-    │               │ + Gateway ARN   │                   │              │
-    │               │────────────────►│                   │              │
-    │               │                 │                   │              │
-    │               │                 │ ① MCP list_tools  │              │
-    │               │                 │──────────────────►│              │
-    │               │                 │ tools: [11 tools] │              │
-    │               │                 │◄──────────────────│              │
-    │               │                 │                   │              │
-    │               │                 │ ② Model reasons:  │              │
-    │               │                 │ "search_products" │              │
-    │               │                 │                   │              │
-    │               │                 │ ③ MCP tools/call  │              │
-    │               │                 │──────────────────►│ ④ Invoke     │
-    │               │                 │                   │─────────────►│
-    │               │                 │                   │ result       │
-    │               │                 │                   │◄─────────────│
-    │               │                 │ tool result       │              │
-    │               │                 │◄──────────────────│              │
-    │               │                 │                   │              │
-    │               │                 │ ⑤ Model generates │              │
-    │               │                 │ final response    │              │
-    │               │                 │                   │              │
-    │               │ ⑥ SSE stream    │                   │              │
-    │               │◄────────────────│                   │              │
-    │               │                 │                   │              │
-    │ ⑦ JSON        │                 │                   │              │
-    │ response      │                 │                   │              │
-    │◄──────────────│                 │                   │              │
-    │                      │                       │──────────────────►│
 ```
 
 ### Why Server-Side Tool Execution?
 
 | Aspect | Client-Side (Traditional) | Server-Side (This Demo) |
 |--------|--------------------------|------------------------|
-| **Tool orchestration** | Client code loops: call model → parse tool → execute → send result → repeat | Single API call — Bedrock handles everything |
-| **Code complexity** | 50+ lines of orchestration logic | 1 API call with Gateway ARN |
-| **Latency** | Multiple round-trips (client ↔ model ↔ client) | All happens server-side, near-zero network overhead |
-| **Security** | Client needs tool credentials | Tools run in AWS with IAM — client never sees credentials |
-| **Scaling** | Client must handle concurrency | Bedrock + Lambda auto-scale |
-
-## How It Works
-
-### Full Production Flow
-
-```
-Client → AgentCore Runtime → Responses API → GPT OSS 120B → AgentCore Gateway → Lambda → DynamoDB
-               /invocations       (bedrock-mantle)      (server-side tool execution)
-```
-
-1. Client sends a POST to AgentCore Runtime `/invocations`
-2. Runtime agent calls Bedrock Responses API with the Gateway ARN
-3. Bedrock discovers tools from Gateway, model reasons and selects tools
-4. Bedrock executes tools via Gateway → Lambda (all server-side)
-5. Model generates final response with tool results
-6. Runtime returns JSON response to client
-
-### Single API Call — That's It
-
-```python
-# This is the ENTIRE agent logic. No orchestration loop.
-response = requests.post(
-    "https://bedrock-mantle.us-west-2.api.aws/v1/responses",
-    json={
-        "model": "openai.gpt-oss-120b",
-        "stream": True,
-        "background": False,
-        "store": False,
-        "tools": [{
-            "type": "mcp",
-            "server_label": "agentcore_tools",
-            "connector_id": "<GATEWAY_ARN>",        # Gateway discovers tools automatically
-            "require_approval": "never",
-        }],
-        "input": [{                                   # Must use message array format
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": "Find headphones under $100"}]
-        }]
-    }
-)
-# Stream SSE events → get tool calls + final text response
-```
-
-> **⚠️ Important:** The `input` field must use the full message array format (not a plain string). Using `"input": "plain text"` causes the model to loop tool calls indefinitely.
-
-### Example Conversation
-
-```
-🧑 You: I'm looking for wireless headphones under $100
-
-🤖 ShopAssist: I found some great options for you:
-
-• [ELEC-001] SoundWave Pro Wireless Headphones — $79.99 | ★ 4.5 (2847 reviews)
-  Premium ANC, 30-hour battery, memory foam cushions
-
-• [ELEC-005] RunnerX Sport Earbuds — $69.99 | ★ 4.4 (3156 reviews)
-  Secure-fit, bone conduction, IP67, 10-hour battery
-
-• [ELEC-003] AirBud Mini Earbuds — $49.99 | ★ 4.2 (5621 reviews)
-  True wireless, touch controls, IPX5, 24-hour total battery
-
-Would you like details on any of these, or shall I add one to your cart?
-```
+| **Orchestration** | Client loops: model → parse → execute → send result → repeat | Single API call — Bedrock handles the loop |
+| **Code complexity** | 50+ lines of tool-call orchestration | 1 API call with Gateway ARN |
+| **Latency** | Multiple client↔model round-trips | All server-side, near-zero network overhead |
+| **Security** | Client needs tool credentials | Tools execute in AWS with IAM — client never sees credentials |
 
 ## Quick Start
 
 ### Prerequisites
 
-- AWS account with Bedrock model access enabled for `openai.gpt-oss-120b`
+- AWS account with Bedrock model access for `openai.gpt-oss-120b`
 - AWS CLI configured (`aws configure`)
-- Python 3.12+
+- Python 3.12+, `pip install bedrock-agentcore-starter-toolkit`
 
-> **Note:** Uses standard AWS IAM credentials (SigV4). No separate API key needed.
+### Deploy
 
-### Deploy (One Command)
+#### Option A: Toolkit Deploy (Recommended)
 
 ```bash
-# 1. Create S3 bucket & upload agent code
-aws s3 mb s3://my-shopassist-artifacts --region us-west-2
-./infrastructure/package_agent.sh my-shopassist-artifacts
+pip install bedrock-agentcore-starter-toolkit==0.2.1
 
-# 2. Deploy entire stack
+# 1. Deploy CloudFormation stack (Gateway + Lambdas + DynamoDB)
+aws cloudformation deploy \
+  --template-file infrastructure/cloudformation-one-click.yaml \
+  --stack-name shopassist-demo \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region us-west-2
+
+# 2. Deploy agent to AgentCore Runtime
+python deploy.py
+```
+
+#### Option B: Full CloudFormation
+
+```bash
+# 1. Package agent code
+./infrastructure/package_agent.sh my-bucket-name
+
+# 2. Deploy everything
 aws cloudformation deploy \
   --template-file infrastructure/cloudformation-one-click.yaml \
   --stack-name shopassist-demo \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides \
-    AgentCodeS3Bucket=my-shopassist-artifacts \
+    AgentCodeS3Bucket=my-bucket-name \
     AgentCodeS3Key=shopassist-agent/agent.zip \
   --region us-west-2
 ```
 
-This creates **everything** in one command:
-- 3 DynamoDB tables (Products, Carts, Orders)
-- 3 Lambda functions with 11 tool handlers
-- AgentCore Gateway (MCP endpoint) with 3 Lambda targets
-- AgentCore Runtime hosting the ShopAssist agent (calls Responses API internally)
-- All IAM roles with least-privilege policies
+### Post-Deploy: IAM Setup
+
+Attach the **AmazonBedrockMantleFullAccess** managed policy to the Runtime execution role:
+
+```bash
+# The Responses API (Mantle) requires its own IAM policy — bedrock:* is not enough
+aws iam attach-role-policy \
+  --role-name <RUNTIME_EXECUTION_ROLE_NAME> \
+  --policy-arn arn:aws:iam::aws:policy/AmazonBedrockMantleFullAccess
+```
+
+> **⚠️ Important:** Without this policy, calls to the Responses API from Runtime will return HTTP 401. The `bedrock:*` actions do not cover Mantle operations.
 
 ### Test
 
 ```bash
-# Get Runtime endpoint and Gateway ARN from stack outputs
-aws cloudformation describe-stacks --stack-name shopassist-demo \
-  --query 'Stacks[0].Outputs' --output table --region us-west-2
-
-# Option 1: Call via AgentCore Runtime (production path)
-RUNTIME_ARN=$(aws cloudformation describe-stacks --stack-name shopassist-demo \
-  --query 'Stacks[0].Outputs[?OutputKey==`RuntimeArn`].OutputValue' --output text --region us-west-2)
-
+# Via AgentCore Runtime (production path)
 aws bedrock-agentcore invoke-agent-runtime \
-  --agent-runtime-id $(echo $RUNTIME_ARN | awk -F/ '{print $2}') \
+  --agent-runtime-arn <RUNTIME_ARN> \
+  --payload '{"query": "Find headphones under $100", "customer_id": "CUST-001"}' \
   --region us-west-2 \
-  --body '{"query": "Show me wireless headphones under $100", "customer_id": "CUST-001"}' \
   output.json && cat output.json
+```
 
-# Option 2: Run the server-side demo locally (calls Responses API directly)
-GATEWAY_ARN=$(aws cloudformation describe-stacks --stack-name shopassist-demo \
-  --query 'Stacks[0].Outputs[?OutputKey==`GatewayArn`].OutputValue' --output text --region us-west-2)
+### Example
 
-pip install boto3 requests strands-agents
-export GATEWAY_ARN
-python -m agent.serverside_agent
+```
+🧑 "Find headphones under $100"
+
+🤖 Here are some headphones under $100:
+   • SoundWave Pro Wireless Headphones — $79.99 ★4.5
+   • AirBud Mini Earbuds — $49.99 ★4.2
+   • RunnerX Sport Earbuds — $69.99 ★4.4
+
+🧑 "Add the SoundWave Pro to my cart"
+
+🤖 ✅ Added SoundWave Pro Wireless Headphones to your cart (1 × $79.99)
+
+🧑 "Show me my cart"
+
+🤖 Your cart:
+   | Item | Qty | Price |
+   | SoundWave Pro Wireless Headphones | 1 | $79.99 |
+   Total: $79.99
+
+🧑 "What's the status of order ORD-20260401-001?"
+
+🤖 Your order ORD-20260401-001 has been delivered ✅
 ```
 
 ## Project Structure
@@ -253,30 +166,23 @@ python -m agent.serverside_agent
 ```
 ecommerce-agent-demo/
 ├── agent/
-│   ├── data.py                  # 50+ sample products, in-memory state
-│   ├── local_agent.py           # Strands Agent + @tool (client-side mode)
-│   ├── gateway_agent.py         # MCP Client → AgentCore Gateway
-│   ├── serverside_agent.py      # Responses API server-side tool execution
-│   └── runtime_agent.py         # AgentCore Runtime deployment wrapper
+│   ├── shopassist_runtime.py    # ★ Production: Runtime + Responses API
+│   ├── serverside_agent.py      # Standalone Responses API demo
+│   ├── gateway_agent.py         # MCP Client → Gateway (client-side)
+│   ├── local_agent.py           # Strands Agent + @tool (fully local)
+│   └── data.py                  # 50+ sample products, in-memory state
 ├── lambda/
 │   ├── products/handler.py      # Product search, details, recommendations
-│   ├── cart/handler.py          # Cart operations
-│   └── orders/handler.py       # Order management
+│   ├── cart/handler.py          # Cart CRUD operations
+│   └── orders/handler.py        # Order management
 ├── infrastructure/
-│   ├── cloudformation-one-click.yaml  # One-click CFN deployment
+│   ├── cloudformation-one-click.yaml  # Full stack CFN template
 │   ├── package_agent.sh         # Package agent → S3
-│   └── seed_data.py             # Seed DynamoDB with products
-├── demo/
-│   └── run_demo.py              # Interactive CLI demo
-├── tools/
-│   └── tool_schemas.json        # MCP tool schemas
-├── docs/
-│   ├── architecture.md          # Detailed architecture
-│   └── setup.md                 # Setup guide
-├── README.md
-├── requirements.txt
-├── DESIGN.md
-└── Dockerfile                   # Optional container mode
+│   └── seed_data.py             # Seed DynamoDB tables
+├── deploy.py                    # Toolkit-based deployment script
+├── requirements.txt             # Local dev dependencies
+├── requirements-runtime.txt     # Runtime deployment dependencies
+└── README.md
 ```
 
 ## Tools (11 Total)
@@ -286,59 +192,56 @@ ecommerce-agent-demo/
 | `search_products` | Products | Search by keyword, category, price range |
 | `get_product_details` | Products | Full product info by ID |
 | `get_recommendations` | Products | Top-rated recommendations |
-| `add_to_cart` | Cart | Add product to cart |
-| `view_cart` | Cart | View cart contents and totals |
+| `add_to_cart` | Cart | Add product with quantity |
+| `view_cart` | Cart | View contents and totals |
 | `remove_from_cart` | Cart | Remove item from cart |
-| `apply_coupon` | Cart | Apply discount code (WELCOME10, SUMMER20, VIP30) |
+| `apply_coupon` | Cart | Apply discount (WELCOME10, SAVE20, SPRING25, TECH15) |
 | `checkout` | Orders | Place order from cart |
 | `get_order_status` | Orders | Check order tracking |
-| `list_orders` | Orders | List customer's order history |
+| `list_orders` | Orders | Customer's order history |
 | `request_return` | Orders | Request return/refund |
 
-## Key Technical Details
+## Technical Details
 
-### Server-Side Tool Execution (Responses API)
+### Responses API (Mantle)
 
 - **Endpoint:** `https://bedrock-mantle.<region>.api.aws/v1/responses`
-- **Model:** `openai.gpt-oss-120b` (currently the only model supporting server-side tool execution)
-- **Auth:** SigV4 with `bedrock` service name
-- **Streaming:** Required — use `"stream": true`
-- **Input format:** Must use message array: `[{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "..."}]}]`
-- **Tool type:** `"type": "mcp"` with `"connector_id"` set to Gateway ARN
+- **Auth:** SigV4 with service name `bedrock` + **AmazonBedrockMantleFullAccess** IAM policy
+- **Model:** `openai.gpt-oss-120b` (only model family supporting server-side tool execution)
+- **Streaming:** Required (`"stream": true`) — non-streaming times out for tool-heavy requests
+- **Input format:** Must use message array — `[{"type": "message", "role": "user", "content": [...]}]`
 
 ### AgentCore Gateway
 
-- Converts Lambda functions into MCP-compatible tools
+- Exposes Lambda functions as MCP-compatible tools
 - Handles tool discovery (`tools/list`) and execution (`tools/call`)
 - IAM-authenticated targets via `GATEWAY_IAM_ROLE` credential provider
-- Tool schemas defined inline in CloudFormation using `SchemaDefinition` format
+- Tool schemas defined in CloudFormation using `SchemaDefinition` format
 
 ### AgentCore Runtime
 
-- Managed Python 3.12 hosting — the agent's production "home"
-- Receives `/invocations` → calls Responses API with server-side tool execution internally
-- S3 code package deployment (like Lambda, but for long-running agents)
-- Built-in `/ping` health checks, auto-scaling, and observability
-- Gateway ARN auto-injected via `EnvironmentVariables` in CloudFormation
-- Native HTTP server for fast startup (no SDK dependency overhead)
+- Managed Python 3.12 hosting for the agent
+- Receives `/invocations` → calls Responses API internally
+- S3 code package deployment (direct_code_deploy via toolkit)
+- Gateway ARN injected via `environmentVariables`
+- **Note:** Runtime does not preinstall `bedrock-agentcore` SDK — it must be bundled in the deployment package
 
-### Model Support
+### Deployment Notes
 
-| Model | Responses API | Server-Side Tools | Notes |
-|-------|:---:|:---:|-------|
-| GPT OSS 120B | ✅ | ✅ | Primary model for this demo |
-| GPT OSS 20B | ✅ | ✅ | Lower cost alternative |
-| Claude, Llama, etc. | ❌ | ❌ | Use Converse API for client-side tool calling |
-
-> Server-side tool execution via Responses API is currently available for GPT OSS models. Other models support client-side tool calling via the Converse API.
+| Issue | Solution |
+|-------|----------|
+| `ModuleNotFoundError: bedrock_agentcore` | Toolkit's cross-compile (`--only-binary :all:`) skips pure-Python packages. Manually inject `bedrock_agentcore` into the deployment zip |
+| Runtime init > 30s timeout | Keep top-level imports minimal; heavy imports (boto3, etc.) inside functions |
+| Responses API 401 from Runtime | Attach `AmazonBedrockMantleFullAccess` managed policy to the Runtime execution role |
+| Model loops tool calls | Use message array format for `input` field, not plain string |
 
 ## References
 
-- [Bedrock Server-Side Tool Execution docs](https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use.html)
-- [AgentCore Gateway docs](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway.html)
-- [Responses API (Mantle) docs](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html)
-- [Strands Agents SDK](https://strandsagents.com)
-- [Model Cards](https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html)
+- [Bedrock Responses API (Mantle)](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html)
+- [AgentCore Gateway](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway.html)
+- [AgentCore Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime.html)
+- [Server-Side Tool Execution](https://docs.aws.amazon.com/bedrock/latest/userguide/tool-use.html)
+- [AmazonBedrockMantleFullAccess](https://docs.aws.amazon.com/bedrock/latest/userguide/security-iam-awsmanpol.html#security-iam-awsmanpol-AmazonBedrockMantleFullAccess)
 
 ## License
 

@@ -522,6 +522,7 @@ Resources:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
                   - bedrock:CreateResponse
+                  - bedrock:*
                 Resource: "*"
         - PolicyName: AgentCoreGatewayAccess
           PolicyDocument:
@@ -540,6 +541,16 @@ Resources:
                 Action:
                   - s3:GetObject
                 Resource: !Sub arn:aws:s3:::${AgentCodeS3Bucket}/${AgentCodeS3Key}
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
 
   ShopAssistRuntime:
     Type: AWS::BedrockAgentCore::Runtime
@@ -549,13 +560,13 @@ Resources:
       - CartTarget
       - OrdersTarget
     Properties:
-      AgentRuntimeName: ShopAssistAgent
-      Description: "ShopAssist E-Commerce Agent — Strands Agents + Bedrock + AgentCore Gateway"
+      AgentRuntimeName: ShopAssistAgentV6
+      Description: "ShopAssist E-Commerce Agent — Server-Side Tool Execution via Responses API + AgentCore Gateway"
       AgentRuntimeArtifact:
         CodeConfiguration:
           Runtime: PYTHON_3_12
           EntryPoint:
-            - agent/runtime_agent.py
+            - main.py
           Code:
             S3:
               Bucket: !Ref AgentCodeS3Bucket

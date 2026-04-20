@@ -149,6 +149,17 @@ def main():
                         "Effect": "Allow",
                         "Action": ["logs:*"],
                         "Resource": "*"
+                    },
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "xray:PutTraceSegments",
+                            "xray:PutTelemetryRecords",
+                            "xray:GetSamplingRules",
+                            "xray:GetSamplingTargets",
+                            "cloudwatch:PutMetricData"
+                        ],
+                        "Resource": "*"
                     }
                 ]
             })
@@ -167,6 +178,15 @@ def main():
             "AWS_REGION": REGION,
             "GATEWAY_ARN": gateway_arn,
             "BEDROCK_MODEL_ID": MODEL_ID,
+            # OpenTelemetry / CloudWatch observability
+            "OTEL_PYTHON_DISTRO": "aws_distro",
+            "OTEL_PYTHON_CONFIGURATOR": "aws_configurator",
+            "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+            "OTEL_TRACES_EXPORTER": "otlp",
+            "OTEL_METRICS_EXPORTER": "none",
+            "OTEL_LOG_LEVEL": "info",
+            "OTEL_AWS_APPLICATION_SIGNALS_ENABLED": "true",
+            "OTEL_SERVICE_NAME": AGENT_NAME,
         },
         "agentRuntimeArtifact": {
             "containerConfiguration": {

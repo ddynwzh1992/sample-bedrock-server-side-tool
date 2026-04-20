@@ -162,7 +162,7 @@ def main():
         "agentRuntimeName": AGENT_NAME,
         "roleArn": role_arn,
         "networkConfiguration": {"networkMode": "PUBLIC"},
-        "protocolConfiguration": "HTTP",
+        "protocolConfiguration": {"protocolType": "HTTP"},
         "environmentVariables": {
             "AWS_REGION": REGION,
             "GATEWAY_ARN": gateway_arn,
@@ -170,20 +170,25 @@ def main():
         },
         "agentRuntimeArtifact": {
             "containerConfiguration": {
-                "imageUri": image_uri,
+                "containerUri": image_uri,
             }
         },
     }
 
     if runtime_id:
-        del runtime_config["agentRuntimeName"]
-        runtime_config["agentRuntimeId"] = runtime_id
-        ctrl.update_agent_runtime(**runtime_config)
-        print(f"   Updated runtime: {runtime_id}")
-    else:
-        result = ctrl.create_agent_runtime(**runtime_config)
-        runtime_id = result["agentRuntimeId"]
-        print(f"   Created runtime: {runtime_id}")
+        # Delete existing and recreate with container config
+        print(f"   Deleting old runtime: {runtime_id}")
+        try:
+            ctrl.delete_agent_runtime(agentRuntimeId=runtime_id)
+            time.sleep(10)
+        except Exception:
+            pass
+        runtime_id = None
+
+    # Always create fresh
+    result = ctrl.create_agent_runtime(**runtime_config)
+    runtime_id = result["agentRuntimeId"]
+    print(f"   Created runtime: {runtime_id}")
 
     runtime_arn = f"arn:aws:bedrock-agentcore:{REGION}:{account_id}:runtime/{runtime_id}"
 

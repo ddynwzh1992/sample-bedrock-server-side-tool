@@ -106,6 +106,7 @@ The deploy script will:
 aws bedrock-agentcore invoke-agent-runtime \
   --agent-runtime-arn <RUNTIME_ARN> \
   --payload '{"query": "Find headphones under $100", "customer_id": "CUST-001"}' \
+  --cli-binary-format raw-in-base64-out \
   --region us-west-2 \
   output.json && cat output.json
 ```

@@ -162,7 +162,7 @@ def main():
         "agentRuntimeName": AGENT_NAME,
         "roleArn": role_arn,
         "networkConfiguration": {"networkMode": "PUBLIC"},
-        "protocolConfiguration": {"protocolType": "HTTP"},
+        "protocolConfiguration": {"serverProtocol": "HTTP"},
         "environmentVariables": {
             "AWS_REGION": REGION,
             "GATEWAY_ARN": gateway_arn,

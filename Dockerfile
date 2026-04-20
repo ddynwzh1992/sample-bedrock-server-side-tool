@@ -9,5 +9,5 @@ RUN pip install --no-cache-dir -r requirements-container.txt
 # Copy agent code
 COPY agent/ ./agent/
 
-# AgentCore Runtime entrypoint
-CMD ["python", "agent/shopassist_runtime.py"]
+# AgentCore Runtime entrypoint with OpenTelemetry instrumentation for CloudWatch observability
+CMD ["opentelemetry-instrument", "python", "agent/shopassist_runtime.py"]

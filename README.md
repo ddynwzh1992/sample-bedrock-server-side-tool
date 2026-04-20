@@ -81,7 +81,7 @@ An AI-powered e-commerce shopping assistant where **Amazon Bedrock executes tool
 
 ```bash
 # 0. Install dependencies
-pip install bedrock-agentcore==1.0.7 bedrock-agentcore-starter-toolkit==0.2.1
+pip install boto3 bedrock-agentcore==1.0.7 bedrock-agentcore-starter-toolkit==0.2.1
 
 # 1. Deploy CloudFormation stack (Gateway + Lambdas + DynamoDB)
 aws cloudformation deploy \
@@ -91,7 +91,6 @@ aws cloudformation deploy \
   --region us-west-2
 
 # 2. Deploy agent to AgentCore Runtime (container-based)
-pip install boto3
 python deploy_container.py
 ```
 

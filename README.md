@@ -74,15 +74,12 @@ An AI-powered e-commerce shopping assistant where **Amazon Bedrock executes tool
 
 - AWS account with Bedrock model access for `openai.gpt-oss-120b`
 - AWS CLI configured (`aws configure`)
-- Python 3.12+, `pip install bedrock-agentcore-starter-toolkit`
+- Python 3.12+
+- Docker (for container-based Runtime deployment)
 
 ### Deploy
 
-#### Option A: Toolkit Deploy (Recommended)
-
 ```bash
-pip install bedrock-agentcore-starter-toolkit==0.2.1
-
 # 1. Deploy CloudFormation stack (Gateway + Lambdas + DynamoDB)
 aws cloudformation deploy \
   --template-file infrastructure/cloudformation-one-click.yaml \
@@ -90,39 +87,17 @@ aws cloudformation deploy \
   --capabilities CAPABILITY_NAMED_IAM \
   --region us-west-2
 
-# 2. Deploy agent to AgentCore Runtime
-python deploy.py
+# 2. Deploy agent to AgentCore Runtime (container-based)
+pip install boto3
+python deploy_container.py
 ```
 
-#### Option B: Full CloudFormation
-
-```bash
-# 1. Package agent code
-./infrastructure/package_agent.sh my-bucket-name
-
-# 2. Deploy everything
-aws cloudformation deploy \
-  --template-file infrastructure/cloudformation-one-click.yaml \
-  --stack-name shopassist-demo \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides \
-    AgentCodeS3Bucket=my-bucket-name \
-    AgentCodeS3Key=shopassist-agent/agent.zip \
-  --region us-west-2
-```
-
-### Post-Deploy: IAM Setup
-
-Attach the **AmazonBedrockMantleFullAccess** managed policy to the Runtime execution role:
-
-```bash
-# The Responses API (Mantle) requires its own IAM policy — bedrock:* is not enough
-aws iam attach-role-policy \
-  --role-name <RUNTIME_EXECUTION_ROLE_NAME> \
-  --policy-arn arn:aws:iam::aws:policy/AmazonBedrockMantleFullAccess
-```
-
-> **⚠️ Important:** Without this policy, calls to the Responses API from Runtime will return HTTP 401. The `bedrock:*` actions do not cover Mantle operations.
+The deploy script will:
+1. Build a Docker image with all dependencies
+2. Push to ECR
+3. Create an AgentCore Runtime with the container
+4. Attach `AmazonBedrockMantleFullAccess` IAM policy automatically
+5. Wait for READY status and run a test invocation
 
 ### Test
 

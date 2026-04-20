@@ -11,12 +11,16 @@ Parameters:
 
   AgentCodeS3Bucket:
     Type: String
-    Description: S3 bucket containing the agent code package (zip)
+    Default: ''
+    Description: S3 bucket containing the agent code package (zip). Leave empty if using toolkit deploy.
 
   AgentCodeS3Key:
     Type: String
     Default: shopassist-agent/agent.zip
     Description: S3 key for the agent code zip package
+
+Conditions:
+  DeployRuntime: !Not [!Equals [!Ref AgentCodeS3Bucket, '']]
 
 Resources:
   # ═══════════════════════════════════════════════════════════════════════════════
@@ -503,6 +507,7 @@ Resources:
 
   AgentRuntimeRole:
     Type: AWS::IAM::Role
+    Condition: DeployRuntime
     Properties:
       RoleName: !Sub ${AWS::StackName}-RuntimeRole
       AssumeRolePolicyDocument:
@@ -554,6 +559,7 @@ Resources:
 
   ShopAssistRuntime:
     Type: AWS::BedrockAgentCore::Runtime
+    Condition: DeployRuntime
     DependsOn:
       - ShopAssistGateway
       - ProductsTarget
@@ -595,11 +601,13 @@ Outputs:
     Description: AgentCore Gateway MCP URL (use for client-side MCP connection)
     Value: !GetAtt ShopAssistGateway.GatewayUrl
 
-  # Runtime
+  # Runtime (only when AgentCodeS3Bucket is provided)
   RuntimeArn:
+    Condition: DeployRuntime
     Description: AgentCore Runtime ARN
     Value: !GetAtt ShopAssistRuntime.AgentRuntimeArn
   RuntimeId:
+    Condition: DeployRuntime
     Description: AgentCore Runtime ID
     Value: !GetAtt ShopAssistRuntime.AgentRuntimeId
 

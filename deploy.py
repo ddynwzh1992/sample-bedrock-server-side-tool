@@ -151,34 +151,61 @@ def main():
             print(f"   [{i*5}s] {status}")
     print(f"   Status: {status}")
 
-    # 5. Remind about IAM
+    # 5. Attach IAM policy automatically
     print(f"\n5️⃣  IAM Setup")
     role_name = current["roleArn"].split("/")[-1]
-    print(f"   ⚠ Attach AmazonBedrockMantleFullAccess to: {role_name}")
-    print(f"   Run:")
-    print(f"   aws iam attach-role-policy \\")
-    print(f"     --role-name {role_name} \\")
-    print(f"     --policy-arn arn:aws:iam::aws:policy/AmazonBedrockMantleFullAccess")
-
-    # 6. Test
-    print(f"\n6️⃣  Testing...")
-    time.sleep(5)
-    rt = boto3.client("bedrock-agentcore", region_name=REGION)
+    iam = boto3.client("iam")
+    mantle_policy = "arn:aws:iam::aws:policy/AmazonBedrockMantleFullAccess"
     try:
-        resp = rt.invoke_agent_runtime(
-            agentRuntimeArn=runtime_arn,
-            payload=json.dumps({"query": "Hello, what can you help me with?"}).encode(),
-        )
-        data = resp["response"].read().decode()
-        for line in data.strip().split("\n"):
-            if line.startswith("data: "):
-                event = json.loads(line[6:])
-                if event.get("type") == "text":
-                    print(f"   🤖 {event['content'][:200]}")
-        print("\n✅ Deployment complete!")
+        iam.attach_role_policy(RoleName=role_name, PolicyArn=mantle_policy)
+        print(f"   ✓ Attached AmazonBedrockMantleFullAccess to {role_name}")
+    except iam.exceptions.NoSuchEntityException:
+        print(f"   ⚠ Role {role_name} not found — attach manually")
     except Exception as e:
-        print(f"   ❌ Test failed: {e}")
-        print(f"   Make sure AmazonBedrockMantleFullAccess is attached.")
+        if "already" in str(e).lower() or "conflict" in str(e).lower():
+            print(f"   ✓ AmazonBedrockMantleFullAccess already attached")
+        else:
+            print(f"   ⚠ Could not attach policy: {e}")
+            print(f"   Manual: aws iam attach-role-policy --role-name {role_name} --policy-arn {mantle_policy}")
+
+    # 6. Wait for Runtime to pick up injected zip (cold restart cycle)
+    print(f"\n6️⃣  Waiting for Runtime cold restart (90s)...")
+    print(f"   (Runtime needs to recycle to pick up the injected SDK)")
+    for i in range(9):
+        time.sleep(10)
+        print(f"   [{(i+1)*10}s/90s]", end="", flush=True)
+    print()
+
+    # 7. Test invoke with retry
+    print(f"\n7️⃣  Testing...")
+    rt = boto3.client("bedrock-agentcore", region_name=REGION)
+    success = False
+    for attempt in range(3):
+        try:
+            if attempt > 0:
+                print(f"   Retry {attempt}/2 in 30s...")
+                time.sleep(30)
+            resp = rt.invoke_agent_runtime(
+                agentRuntimeArn=runtime_arn,
+                payload=json.dumps({"query": "Hello, what can you help me with?"}).encode(),
+            )
+            data = resp["response"].read().decode()
+            for line in data.strip().split("\n"):
+                if line.startswith("data: "):
+                    event = json.loads(line[6:])
+                    if event.get("type") == "text":
+                        print(f"   🤖 {event['content'][:200]}")
+            print("\n✅ Deployment complete!")
+            success = True
+            break
+        except Exception as e:
+            print(f"   ❌ Attempt {attempt+1}: {e}")
+
+    if not success:
+        print(f"\n⚠️  All retries failed. Try manually in ~60s:")
+        print(f"   aws bedrock-agentcore invoke-agent-runtime \\")
+        print(f"     --agent-runtime-arn {runtime_arn} \\")
+        print(f"     --payload '{{\"query\":\"hello\"}}' --region {REGION} out.json")
 
     print(f"\n📋 Summary:")
     print(f"   Runtime ARN: {runtime_arn}")

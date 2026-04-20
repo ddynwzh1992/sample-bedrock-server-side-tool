@@ -119,12 +119,12 @@ def main():
     local_zip = "/tmp/shopassist-deploy.zip"
 
     s3.download_file(bucket, key, local_zip)
-    inject_sdk_into_zip(local_zip)
+    injected = inject_sdk_into_zip(local_zip)
     s3.upload_file(local_zip, bucket, key)
     os.remove(local_zip)
 
-    # 4. Set environment variables
-    print("\n4️⃣  Configuring environment variables...")
+    # 4. Set environment variables & trigger redeploy (picks up injected zip)
+    print("\n4️⃣  Configuring environment variables & redeploying...")
     ctrl = boto3.client("bedrock-agentcore-control", region_name=REGION)
     current = ctrl.get_agent_runtime(agentRuntimeId=runtime_id)
 
@@ -141,11 +141,14 @@ def main():
     )
 
     import time
-    for _ in range(20):
-        time.sleep(3)
+    print("   Waiting for Runtime to become READY...")
+    for i in range(30):
+        time.sleep(5)
         status = ctrl.get_agent_runtime(agentRuntimeId=runtime_id)["status"]
         if status == "READY":
             break
+        if i % 4 == 0:
+            print(f"   [{i*5}s] {status}")
     print(f"   Status: {status}")
 
     # 5. Remind about IAM
